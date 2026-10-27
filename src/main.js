@@ -5,7 +5,7 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
-import { makeCityReflection } from './reflections.js';
+import { startCityReflection } from './reflections.js';
 import { buildCity } from './city.js';
 import { moveWithCollisions } from './plan.js';
 import { loadMaterialLibrary } from './materialLibrary.js';
@@ -37,6 +37,7 @@ root.innerHTML = `
     <div class="field-head field-space"><label for="weather">SURFACE WEATHERING</label><span id="weather-value">80%</span></div>
     <input id="weather" class="weather-range" type="range" min="0" max="150" value="80" aria-label="Surface weathering">
     <button id="open-materials" class="library-button"><span>EXPLORE MATERIAL SETS</span><span>↗</span></button>
+    <button id="open-performance" class="library-button"><span>PERFORMANCE DETAILS</span><span>↗</span></button>
     <p class="hint" id="maps-status">Loading material sets…</p>
   </main>
   <div class="walk-ui" id="walk-ui"><span class="crosshair">+</span><span>W A S D &nbsp; MOVE &nbsp; · &nbsp; MOUSE &nbsp; LOOK &nbsp; · &nbsp; SHIFT &nbsp; RUN &nbsp; · &nbsp; ESC &nbsp; RELEASE</span></div>
@@ -49,6 +50,12 @@ root.innerHTML = `
     <div class="material-grid" id="material-grid"></div>
     <p class="material-footer">Colour, normal and packed AO/roughness/metalness maps are included at 1024 × 1024. All six scans are CC0 from Poly Haven.</p>
   </dialog>
+  <dialog class="material-dialog performance-dialog" id="performance-dialog" aria-labelledby="performance-title">
+    <div class="material-heading"><div><div class="eyebrow">CITY LAB / DIAGNOSTICS</div><h2 id="performance-title">Performance details</h2><p>Measurements from this browser and device.</p></div><button id="close-performance" class="close-dialog" aria-label="Close performance details">×</button></div>
+    <div class="performance-grid" id="performance-grid"></div>
+    <p class="material-footer">Frame time includes browser scheduling. CPU submit time does not measure GPU execution; shader compilation and texture upload may continue after the first frame.</p>
+    <button id="copy-performance" class="library-button"><span>COPY DIAGNOSTICS</span><span>↗</span></button>
+  </dialog>
   <div class="loader" id="loader"><div class="loader-inner"><div class="spinner"></div><strong id="loader-title">BUILDING THE CITY</strong><span id="loader-detail">Preparing WebGPU and architectural modules…</span></div></div>
   <div class="failure" id="failure" hidden><div><span class="eyebrow">DEVICE NOT READY</span><h2 id="failure-title">WebGPU is unavailable</h2><p id="failure-detail"></p><button id="retry" class="outline-button">TRY AGAIN</button></div></div>
 `;
@@ -57,9 +64,12 @@ const $ = id => document.getElementById(id);
 let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode, csm;
 let environmentTexture, materialLibrary;
 const reflectionCache = new Map();
-let currentProbeKey = null, nextProbeCheck = 0, probeScheduled = false;
+let currentProbeKey = null, nextProbeCheck = 0, pendingProbe = null;
 let mode = 'walk';
 let previousTime = 0, elapsed = 0, frames = 0;
+const performanceInfo = { started: performance.now(), deviceMs: null, materialsMs: null, cityMs: null,
+  firstFrameMs: null, probeMs: null, frameMs: null, frame95Ms: null, submitMs: null, draws: null, triangles: null };
+const frameSamples = [];
 let yaw = 0, pitch = 0;
 const keys = new Set();
 const QUALITY = {
@@ -86,6 +96,7 @@ function environment(mood) {
 }
 
 function clearReflectionCache() {
+  pendingProbe?.capture.cancel(); pendingProbe = null;
   for (const target of reflectionCache.values()) target.dispose();
   reflectionCache.clear(); currentProbeKey = null;
 }
@@ -93,20 +104,38 @@ function clearReflectionCache() {
 function updateReflectionProbe() {
   if (!scene || !city || !environmentTexture) return;
   const anchor = probeAnchor(camera.position.x, camera.position.z), key = probeKey(anchor);
-  if (key === currentProbeKey) return;
-  let target = reflectionCache.get(key);
-  if (!target) {
-    const p = MOODS[$('mood').value];
-    target = makeCityReflection(renderer, city.plan, environmentTexture, new THREE.Vector3(...p.sun).normalize(), p.sunColor, anchor);
-    reflectionCache.set(key, target);
-    if (reflectionCache.size > 4) {
-      const oldestKey = reflectionCache.keys().next().value;
-      reflectionCache.get(oldestKey).dispose(); reflectionCache.delete(oldestKey);
-    }
-  } else {
-    reflectionCache.delete(key); reflectionCache.set(key, target);
+  if (key === currentProbeKey) {
+    if (pendingProbe && pendingProbe.key !== key) { pendingProbe.capture.cancel(); pendingProbe = null; }
+    return;
   }
-  scene.environment = target.texture; currentProbeKey = key;
+  let target = reflectionCache.get(key);
+  if (target) {
+    pendingProbe?.capture.cancel(); pendingProbe = null;
+    reflectionCache.delete(key); reflectionCache.set(key, target);
+    scene.environment = target.texture; currentProbeKey = key;
+  } else if (pendingProbe?.key !== key) {
+    pendingProbe?.capture.cancel();
+    const p = MOODS[$('mood').value];
+    pendingProbe = { key, capture: startCityReflection(renderer, city.plan, environmentTexture, new THREE.Vector3(...p.sun).normalize(), p.sunColor, anchor) };
+  }
+}
+
+function advanceReflectionProbe() {
+  if (!pendingProbe) return;
+  const { key, capture } = pendingProbe, started = performance.now();
+  try {
+    if (capture.step()) {
+      reflectionCache.set(key, capture.target);
+      if (reflectionCache.size > 4) {
+        const oldestKey = reflectionCache.keys().next().value;
+        reflectionCache.get(oldestKey).dispose(); reflectionCache.delete(oldestKey);
+      }
+      scene.environment = capture.target.texture; currentProbeKey = key; pendingProbe = null;
+    }
+  } catch (error) {
+    capture.cancel(); pendingProbe = null; console.warn('Reflection probe could not be updated:', error);
+  }
+  performanceInfo.probeMs = performance.now() - started;
 }
 
 function applyMood() {
@@ -122,6 +151,7 @@ function applyMood() {
   city.materials.glassWarm.emissiveIntensity = p.warm;
   const oldSky = environmentTexture;
   scene.environment = null; clearReflectionCache(); environmentTexture = environment(p);
+  scene.environment = environmentTexture; // usable sky lighting while the first probe is captured
   updateReflectionProbe(); oldSky?.dispose();
 }
 
@@ -168,7 +198,9 @@ async function rebuild() {
   if (document.pointerLockElement) document.exitPointerLock();
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   try {
+    const buildStarted = performance.now();
     const next = buildCity(seed, materialLibrary);
+    performanceInfo.cityMs = performance.now() - buildStarted;
     city?.dispose(); city = next; scene.add(city.group);
     $('building-count').textContent = String(city.plan.buildings.length).padStart(2, '0');
     resetWalk(); applyMood();
@@ -187,16 +219,25 @@ function showFailure(title, error) {
 async function init() {
   try {
     if (!navigator.gpu) throw new Error('This browser or device does not expose WebGPU. Open this page in a recent WebGPU-enabled desktop browser on HTTPS, and make sure hardware acceleration is enabled.');
+    // Image requests and device initialization are independent; start them together.
+    const materialStarted = performance.now();
+    const materialPromise = loadMaterialLibrary({ base: import.meta.env.BASE_URL, anisotropy: 8,
+      onProgress: (done, total) => { $('loader-detail').textContent = `Preparing material sets ${done} / ${total}…`; } })
+      .then(library => { performanceInfo.materialsMs = performance.now() - materialStarted; return library; });
+    const deviceStarted = performance.now();
     renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
     try {
       await renderer.init();
+      performanceInfo.deviceMs = performance.now() - deviceStarted;
     } catch (cause) {
       const detail = cause instanceof Error ? ` Details: ${cause.message}` : '';
       throw new Error(`A WebGPU graphics device could not be started. Try a recent desktop browser with hardware acceleration enabled.${detail}`);
     }
     if (!renderer.backend.isWebGPUBackend) throw new Error('The browser could not initialise a WebGPU adapter. A WebGL fallback is not used by this research prototype.');
+    // Accumulate every pass of a frame, rather than only the final post-process draw.
+    renderer.info.autoReset = false;
     renderer.backend.device.lost.then(info => {
       renderer.setAnimationLoop(null);
       showFailure('WebGPU device was lost', new Error(info.message || 'The graphics device stopped responding. Reload the page to try again.'));
@@ -215,7 +256,11 @@ async function init() {
     csm = new CSMShadowNode(sun, { cascades: 3, maxFar: 260, lightMargin: 120 });
     csm.fade = true; sun.shadow.shadowNode = csm;
     scene.add(sun); scene.add(sun.target);
-    const prePass = pass(scene, camera); prePass.setMRT(mrt({ output: normalView }));
+    // AO needs geometric normals/depth, not a second fully lit and textured scene.
+    // Avoid a 4× MSAA pre-pass; the beauty pass keeps its MSAA and final FXAA.
+    const prePass = pass(scene, camera, { samples: 0 });
+    prePass.overrideMaterial = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+    prePass.setMRT(mrt({ output: normalView }));
     aoNode = ao(prePass.getTextureNode('depth'), prePass.getTextureNode(), camera);
     aoNode.radius.value = 1.25; aoNode.thickness.value = 1.0;
     const scenePass = pass(scene, camera);
@@ -226,8 +271,7 @@ async function init() {
     pipeline.outputNode = fxaa(renderOutput(sceneColor.add(glow)));
     applyQuality();
     setLoading('LOADING MATERIALS', 'Preparing photographed colour, normal and surface maps…');
-    materialLibrary = await loadMaterialLibrary({ base: import.meta.env.BASE_URL, anisotropy: renderer.getMaxAnisotropy(),
-      onProgress: (done, total) => { $('loader-detail').textContent = `Preparing material sets ${done} / ${total}…`; } });
+    materialLibrary = await materialPromise;
     $('maps-status').textContent = materialLibrary.errors.length
       ? `${6 - materialLibrary.errors.length} / 6 material sets loaded; the rest use procedural fallback.`
       : '6 material sets · 1K PBR maps · GPU weathering';
@@ -251,18 +295,52 @@ function frame(now) {
     const p = moveWithCollisions(camera.position, dx, dz, city.colliders, .38, city.plan.bounds);
     camera.position.x = p.x; camera.position.z = p.z;
   }
+  renderer.info.reset();
+  const submitStarted = performance.now();
   pipeline.render();
-  // Probe captures are deliberately infrequent and based on nearby road
-  // intersections. A bounded cache avoids capture on every return visit.
-  if (mode === 'walk' && now >= nextProbeCheck && !probeScheduled) {
+  performanceInfo.submitMs = performance.now() - submitStarted;
+  performanceInfo.draws = renderer.info.render.drawCalls;
+  performanceInfo.triangles = renderer.info.render.triangles;
+  if (performanceInfo.firstFrameMs === null) performanceInfo.firstFrameMs = performance.now() - performanceInfo.started;
+  // Probe updates are bounded and spread across frames to avoid six renders at once.
+  if (mode === 'walk' && now >= nextProbeCheck) {
     nextProbeCheck = now + 1800;
-    if (probeKey(probeAnchor(camera.position.x, camera.position.z)) !== currentProbeKey) {
-      probeScheduled = true;
-      requestAnimationFrame(() => { probeScheduled = false; if (mode === 'walk') updateReflectionProbe(); });
-    }
+    updateReflectionProbe();
   }
+  advanceReflectionProbe();
+  if (frameTime > 0 && frameTime < 5) { frameSamples.push(frameTime * 1000); if (frameSamples.length > 120) frameSamples.shift(); }
   elapsed += frameTime; frames++;
-  if (elapsed >= .8) { $('fps').textContent = Math.round(frames / elapsed); frames = 0; elapsed = 0; }
+  if (elapsed >= .8) {
+    $('fps').textContent = Math.round(frames / elapsed);
+    const sorted = [...frameSamples].sort((a,b) => a-b);
+    if (sorted.length) {
+      performanceInfo.frameMs = frameSamples.reduce((sum, value) => sum + value, 0) / frameSamples.length;
+      performanceInfo.frame95Ms = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * .95) - 1)];
+    }
+    if ($('performance-dialog').open) refreshPerformance();
+    frames = 0; elapsed = 0;
+  }
+}
+
+function performanceRows() {
+  const ms = value => Number.isFinite(value) ? `${value.toFixed(1)} ms` : '—';
+  const integer = value => Number.isFinite(value) ? value.toLocaleString() : '—';
+  return [
+    ['WebGPU device setup', ms(performanceInfo.deviceMs)],
+    ['Material image loading', ms(performanceInfo.materialsMs)],
+    ['City assembly on CPU', ms(performanceInfo.cityMs)],
+    ['First frame from app start', ms(performanceInfo.firstFrameMs)],
+    ['Average frame interval', ms(performanceInfo.frameMs)],
+    ['95th percentile frame interval', ms(performanceInfo.frame95Ms)],
+    ['CPU render submission', ms(performanceInfo.submitMs)],
+    ['Last probe face on CPU', ms(performanceInfo.probeMs)],
+    ['Draw calls across passes', integer(performanceInfo.draws)],
+    ['Triangles across passes', integer(performanceInfo.triangles)],
+    ['GPU execution time', 'Not measured'],
+  ];
+}
+function refreshPerformance() {
+  $('performance-grid').innerHTML = performanceRows().map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('');
 }
 
 $('generate').addEventListener('click', rebuild);
@@ -276,6 +354,18 @@ $('weather').addEventListener('input', event => {
 $('material-grid').innerHTML = MATERIAL_CATALOG.map(item => `<a class="material-card" href="https://polyhaven.com/a/${item.id}" target="_blank" rel="noopener noreferrer"><img src="${materialMapPath(import.meta.env.BASE_URL, item.id, 'color')}" alt="" loading="lazy"><div><strong>${item.name}</strong><small>1K PBR · ${item.metres.toFixed(1)} m tile</small><span>${item.pattern === 'stochastic' ? 'ANTI-REPETITION' : 'ALIGNED STRUCTURE'} ↗</span></div></a>`).join('');
 $('open-materials').addEventListener('click', () => $('material-dialog').showModal());
 $('close-materials').addEventListener('click', () => $('material-dialog').close());
+$('open-performance').addEventListener('click', () => { refreshPerformance(); $('performance-dialog').showModal(); });
+$('close-performance').addEventListener('click', () => $('performance-dialog').close());
+$('copy-performance').addEventListener('click', async () => {
+  const button = $('copy-performance');
+  try {
+    await navigator.clipboard.writeText(performanceRows().map(([label, value]) => `${label}: ${value}`).join('\n'));
+    button.firstElementChild.textContent = 'COPIED';
+  } catch {
+    button.firstElementChild.textContent = 'COPY UNAVAILABLE';
+  }
+  setTimeout(() => { button.firstElementChild.textContent = 'COPY DIAGNOSTICS'; }, 1800);
+});
 $('retry').addEventListener('click', () => location.reload());
 window.addEventListener('resize', () => { if (!renderer || !camera) return; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (csm?.camera) csm.updateFrustums(); renderer.setSize(innerWidth, innerHeight); });
 window.addEventListener('keydown', e => { if (document.pointerLockElement) { keys.add(e.code); if (e.code === 'KeyR') resetWalk(); e.preventDefault(); } });

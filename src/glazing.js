@@ -9,7 +9,7 @@ export class GlazingBatch {
   constructor() {
     this.position = []; this.normal = []; this.uv = []; this.center = [];
     this.roomSize = []; this.part = []; this.indices = [];
-    this.count = 0; this.mesh = null;
+    this.count = 0; this.mesh = null; this.ownsMaterial = false;
   }
 
   add({ x, y, z, width, height, axis, sign }) {
@@ -29,7 +29,7 @@ export class GlazingBatch {
     this.count++;
   }
 
-  build() {
+  build(sharedMaterial = null) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.position, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(this.normal, 3));
@@ -38,10 +38,11 @@ export class GlazingBatch {
     geometry.setAttribute('roomSize', new THREE.Float32BufferAttribute(this.roomSize, 2));
     geometry.setAttribute('partId', new THREE.Float32BufferAttribute(this.part, 1));
     geometry.setIndex(this.indices); geometry.computeBoundingSphere();
-    const material = createSkyscraperMaterial(color(0xc6c0b2));
+    const material = sharedMaterial || createSkyscraperMaterial(color(0xc6c0b2));
+    this.ownsMaterial = !sharedMaterial;
     const mesh = new THREE.Mesh(geometry, material); mesh.name = 'Recessed glazing and procedural interiors';
     mesh.receiveShadow = true; this.mesh = mesh; return mesh;
   }
 
-  dispose() { if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.material.dispose(); } }
+  dispose() { if (this.mesh) { this.mesh.geometry.dispose(); if (this.ownsMaterial) this.mesh.material.dispose(); } }
 }

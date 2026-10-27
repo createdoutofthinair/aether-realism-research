@@ -2,7 +2,7 @@
 
 A first research prototype for a **walkable, procedurally assembled WebGPU city**. The target is a cinematic, high-fidelity city suitable for a commercial game. This repository is an experimental starting point, not a finished AAA renderer or part of the main Aether game yet.
 
-Read [the research and production roadmap](docs/RESEARCH.md) for the overall design, and [the material system](docs/MATERIAL_SYSTEM.md) for sources, implementation and next steps.
+Read [the research and production roadmap](docs/RESEARCH.md) for the overall design, and [the material system](docs/MATERIAL_SYSTEM.md) for sources and implementation, and [the performance notes](docs/PERFORMANCE.md) for profiling and optimization.
 
 ## Explore the city
 
@@ -16,7 +16,7 @@ Read [the research and production roadmap](docs/RESEARCH.md) for the overall des
 
 3. Open the local address printed by Vite. GitHub Pages or another HTTPS host can also serve the built `dist` directory. WebGPU requires a secure context; localhost is treated as secure.
 4. Select **Enter the City** and use **WASD** or arrow keys to walk, the **mouse** to look, **Shift** to run, **R** to return to the start, and **Escape** to release the pointer. **Overview** switches to an elevated view; **Street View** returns to street level.
-5. Try another numeric seed, lighting atmosphere, quality setting, or **Surface Weathering** amount. Open **Explore Material Sets** to inspect the six sources.
+5. Try another numeric seed, lighting atmosphere, quality setting, or **Surface Weathering** amount. Open **Explore Material Sets** to inspect the six sources, or **Performance Details** to see and copy timings from your device.
 
 The controls are designed for a desktop keyboard and mouse. Touch navigation is not implemented yet. The prototype reports an error when WebGPU is unavailable rather than silently switching renderers.
 
@@ -51,7 +51,7 @@ Tests cover seed reproducibility, non-overlapping layout, walking collision, spa
 - `src/materials.js`, `src/materialLibrary.js`, `src/surfaceNodes.js` — scanned material sets and GPU procedural overlays.
 - `src/glazing.js`, `src/foliage.js`, `src/reflections.js` — recessed glazing, geometric trees and the proxy reflection probe.
 - `src/main.js` — WebGPU scene, controls, lighting, and post-processing.
-- `docs/RESEARCH.md`, `docs/MATERIAL_SYSTEM.md` — research, constraints, validation and roadmap.
+- `docs/RESEARCH.md`, `docs/MATERIAL_SYSTEM.md`, `docs/PERFORMANCE.md` — research, material design and performance roadmap.
 - `tests/` — layout and collision invariants.
 
 ## Third-party notices

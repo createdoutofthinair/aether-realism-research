@@ -89,4 +89,9 @@ select option { color: #172227; background: #e7e7e0; }
 .material-card small { color: #b4c0ba; font-size: 10px; margin-top: 5px; }
 .material-card span { color: #d8bf9e; font-size: 8px; font-weight: 700; letter-spacing: .12em; margin-top: 11px; }
 .material-footer { margin: 18px 0 0; }
+.performance-dialog { width: min(620px, calc(100vw - 36px)); }
+.performance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 20px; background: #ffffff1a; border: 1px solid #ffffff1a; }
+.performance-grid div { display: flex; flex-direction: column; gap: 7px; padding: 12px; background: #1b2b30; }
+.performance-grid span { font-size: 10px; color: #b4c0ba; }
+.performance-grid strong { font-size: 14px; font-weight: 600; color: #eee7d9; }
 @media (max-width: 620px) { .material-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .material-dialog { padding: 20px; } .material-heading h2 { font-size: 22px; } }

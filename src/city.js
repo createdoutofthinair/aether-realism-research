@@ -9,12 +9,29 @@ import { BenchGenerator } from 'three/addons/generators/city/BenchGenerator.js';
 import { CITY, planCity, randomFromSeed } from './plan.js';
 import { makeMaterials, applyHeritageMaterial } from './materials.js';
 
+// Keep recessed rooms in the same spatial cells as the surrounding facades.
+// A single city-wide glazing mesh could not be culled when looking away.
+class GlazingChunks {
+  constructor() { this.chunks = new Map(); this.material = createSkyscraperMaterial(color(0xc6c0b2)); }
+  add(pane) {
+    const key = `${Math.floor(pane.x / CITY.span)},${Math.floor(pane.z / CITY.span)}`;
+    if (!this.chunks.has(key)) this.chunks.set(key, new GlazingBatch());
+    this.chunks.get(key).add(pane);
+  }
+  build(group) {
+    for (const [key, chunk] of this.chunks) {
+      const mesh = chunk.build(this.material); mesh.name = `glazing:${key}`; group.add(mesh);
+    }
+  }
+  dispose() { for (const chunk of this.chunks.values()) chunk.dispose(); this.chunks.clear(); this.material.dispose(); }
+}
+
 // Instances share materials, but are also grouped by block. Three.js can then
 // frustum-cull whole groups instead of drawing every facade across the city.
 class Batches {
   constructor(materials) {
     this.materials = materials;
-    this.glazing = new GlazingBatch();
+    this.glazing = new GlazingChunks();
     this.boxes = new Map();
     this.cylinders = new Map();
     this.temp = new THREE.Object3D();
@@ -26,24 +43,44 @@ class Batches {
     this.temp.position.set(x, y, z); this.temp.rotation.set(0, yaw, 0); this.temp.scale.set(w, h, d); this.temp.updateMatrix();
     const cellX = Math.floor(x / CITY.span), cellZ = Math.floor(z / CITY.span);
     const batchKey = `${key}:${cellX},${cellZ}`;
-    if (!map.has(batchKey)) map.set(batchKey, { material: key, matrices: [] });
-    map.get(batchKey).matrices.push(this.temp.matrix.clone());
+    if (!map.has(batchKey)) map.set(batchKey, {
+      material: key, count: 0, matrices: new Float32Array(16 * 64),
+      minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity,
+    });
+    const batch = map.get(batchKey), offset = batch.count * 16;
+    if (offset + 16 > batch.matrices.length) {
+      const larger = new Float32Array(batch.matrices.length * 2);
+      larger.set(batch.matrices); batch.matrices = larger;
+    }
+    batch.matrices.set(this.temp.matrix.elements, offset); batch.count++;
+    // Boxes have half-unit extents; cylinders have unit radius and half-unit height.
+    // Bounds include every rotated instance, so frustum culling stays conservative.
+    const scale = map === this.cylinders ? 1 : .5;
+    const hx = w * scale, hz = d * scale, c = Math.abs(Math.cos(yaw)), s = Math.abs(Math.sin(yaw));
+    const ex = c * hx + s * hz, ez = s * hx + c * hz, ey = h * .5;
+    batch.minX = Math.min(batch.minX, x - ex); batch.maxX = Math.max(batch.maxX, x + ex);
+    batch.minY = Math.min(batch.minY, y - ey); batch.maxY = Math.max(batch.maxY, y + ey);
+    batch.minZ = Math.min(batch.minZ, z - ez); batch.maxZ = Math.max(batch.maxZ, z + ez);
   }
   box(key, x, y, z, w, h, d, yaw = 0) { this.add(this.boxes, key, x, y, z, w, h, d, yaw); }
   cylinder(key, x, y, z, r, h, yaw = 0) { this.add(this.cylinders, key, x, y, z, r, h, r, yaw); }
   build(group) {
-    for (const [kind, map] of [[0, this.boxes], [1, this.cylinders]]) for (const [batchKey, { material, matrices }] of map) {
-      const mesh = new THREE.InstancedMesh(this.geometries[kind], this.materials[material], matrices.length);
+    for (const [kind, map] of [[0, this.boxes], [1, this.cylinders]]) for (const [batchKey, batch] of map) {
+      const { material, matrices, count, minX, minY, minZ, maxX, maxY, maxZ } = batch;
+      const mesh = new THREE.InstancedMesh(this.geometries[kind], this.materials[material], count);
       mesh.name = `${kind ? 'cylinder' : 'box'}:${batchKey}`;
-      for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i]);
+      mesh.instanceMatrix.array.set(matrices.subarray(0, count * 16));
       mesh.instanceMatrix.needsUpdate = true;
       mesh.receiveShadow = true;
       // Glazing and painted markings should not create offset self shadows.
       mesh.castShadow = !['glass', 'glassMid', 'glassDark', 'glassWarm', 'marking'].includes(material);
-      mesh.computeBoundingSphere();
+      const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+      // A small epsilon accounts for conversion of instance transforms to Float32.
+      mesh.boundingSphere = new THREE.Sphere(center, Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) / 2 + .001);
       group.add(mesh);
     }
-    group.add(this.glazing.build());
+    this.boxes.clear(); this.cylinders.clear();
+    this.glazing.build(group);
   }
   dispose() { this.geometries.forEach(g => g.dispose()); this.glazing.dispose(); }
 }
@@ -268,15 +305,18 @@ function streets(batch, plan, library) {
 export function buildCity(seed, library = null) {
   const plan = planCity(seed), group = new THREE.Group(), materials = makeMaterials(library);
   const batch = new Batches(materials), furniture = streets(batch, plan, library), resources = [];
+  const heritageMaterials = new Map();
   for (const b of plan.buildings) {
     if (b.kind === 'heritage') {
+      if (!heritageMaterials.has(b.palette)) heritageMaterials.set(b.palette,
+        applyHeritageMaterial(createSkyscraperMaterial(color([0xb79a82, 0xd0bda0, 0x8b7164, 0xc2b8a7][b.palette])), library));
       const generator = new SkyscraperGenerator({
         seed: b.seed, totalHeight: b.floors * b.floorHeight,
         footprint: { width: b.width, depth: b.depth }, floorHeight: b.floorHeight,
         bayWidth: 2.4 + b.variant, pierWidth: .65, pierDepth: .4,
         chamferWidth: b.variant > .55 ? 2 : 0, chamferCornerX: 1, chamferCornerZ: 1,
         setbackDepth: b.variant > .6 ? .45 : 0, stringCourseEvery: 4,
-      }, applyHeritageMaterial(createSkyscraperMaterial(color([0xb79a82, 0xd0bda0, 0x8b7164, 0xc2b8a7][b.palette])), library));
+      }, heritageMaterials.get(b.palette));
       const mesh = generator.build(); mesh.position.set(b.x, CITY.curb, b.z);
       mesh.castShadow = mesh.receiveShadow = true; group.add(mesh); resources.push(generator);
     } else if (b.kind === 'round' || b.kind === 'lobed') roundedBuilding(batch, b);
@@ -290,7 +330,9 @@ export function buildCity(seed, library = null) {
   return { group, plan, colliders: plan.buildings.map(b => b.collider), dispose() {
     group.removeFromParent();
     group.traverse(object => { if (object.isInstancedMesh) object.dispose(); });
-    resources.forEach(resource => { const material = resource.material; resource.dispose(); if (material) material.dispose(); });
+    const sharedMaterials = new Set();
+    resources.forEach(resource => { if (resource.material) sharedMaterials.add(resource.material); resource.dispose(); });
+    sharedMaterials.forEach(material => material.dispose());
     batch.dispose(); Object.values(materials).forEach(material => material.dispose());
   }, materials };
 }

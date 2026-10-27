@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { TreeGenerator } from 'three/addons/generators/TreeGenerator.js';
-import { randomFromSeed } from './plan.js';
+import { CITY, randomFromSeed } from './plan.js';
 
 // A small branchlet of real leaf-shaped triangles, instanced through each crown.
 // This replaces solid low-poly canopy blobs; the tree branch skeleton is also geometry.
@@ -36,32 +36,43 @@ export function buildTrees(placements, seed) {
   const tree = new TreeGenerator().setSeed(812).setTrunkLength(4.0).setTrunkRadius(.17)
     .setLevels(3).setChildren([4, 5]).setTrunkClear(.58).setLengthRatio(.68)
     .setAngleVariance(18).setRadialSegments(6).build();
-  const branches = new THREE.InstancedMesh(tree.geometry, tree.material, placements.length);
-  placements.forEach((matrix, i) => branches.setMatrixAt(i, matrix));
-  branches.instanceMatrix.needsUpdate = true; branches.castShadow = branches.receiveShadow = true;
-  branches.computeBoundingSphere(); group.add(branches);
-
   const geometry = makeLeafCluster();
   const material = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: .9, side: THREE.DoubleSide });
-  const countPerTree = 80, leaves = new THREE.InstancedMesh(geometry, material, placements.length * countPerTree);
-  const random = randomFromSeed(seed ^ 0x76ab15), transform = new THREE.Object3D();
-  const base = new THREE.Vector3(), scale = new THREE.Vector3(), quaternion = new THREE.Quaternion();
-  let index = 0;
+  const countPerTree = 80, chunks = new Map();
+  const cellKey = matrix => `${Math.floor(matrix.elements[12] / CITY.span)},${Math.floor(matrix.elements[14] / CITY.span)}`;
   for (const placement of placements) {
+    const key = cellKey(placement);
+    if (!chunks.has(key)) chunks.set(key, { count: 0, branchIndex: 0, leafIndex: 0 });
+    chunks.get(key).count++;
+  }
+  for (const [key, chunk] of chunks) {
+    chunk.branches = new THREE.InstancedMesh(tree.geometry, tree.material, chunk.count);
+    chunk.leaves = new THREE.InstancedMesh(geometry, material, chunk.count * countPerTree);
+    chunk.branches.name = `tree-branches:${key}`; chunk.leaves.name = `tree-leaves:${key}`;
+  }
+  const random = randomFromSeed(seed ^ 0x76ab15), transform = new THREE.Object3D();
+  const base = new THREE.Vector3(), scale = new THREE.Vector3(), offset = new THREE.Vector3(), quaternion = new THREE.Quaternion();
+  for (const placement of placements) {
+    const chunk = chunks.get(cellKey(placement));
+    chunk.branches.setMatrixAt(chunk.branchIndex++, placement);
     placement.decompose(base, quaternion, scale);
     for (let j = 0; j < countPerTree; j++) {
       // Uniformly distributed foliage clusters make gaps through the crown visible.
       const azimuth = random() * Math.PI * 2, vertical = random() * 2 - 1;
       const radial = Math.sqrt(1 - vertical * vertical) * Math.cbrt(random());
-      const offset = new THREE.Vector3(Math.cos(azimuth)*radial*2.2, 4.8 + vertical*1.55, Math.sin(azimuth)*radial*2.2);
-      offset.multiply(scale).applyQuaternion(quaternion);
+      offset.set(Math.cos(azimuth)*radial*2.2, 4.8 + vertical*1.55, Math.sin(azimuth)*radial*2.2).multiply(scale).applyQuaternion(quaternion);
       transform.position.copy(base).add(offset);
       transform.rotation.set((random()-.5)*1.8, random()*Math.PI*2, (random()-.5)*1.8);
       const size = (1.2 + random() * .8) * scale.x; transform.scale.setScalar(size); transform.updateMatrix();
-      leaves.setMatrixAt(index++, transform.matrix);
+      chunk.leaves.setMatrixAt(chunk.leafIndex++, transform.matrix);
     }
   }
-  leaves.instanceMatrix.needsUpdate = true; leaves.castShadow = leaves.receiveShadow = true;
-  leaves.computeBoundingSphere(); group.add(leaves);
-  return { group, dispose() { branches.dispose(); leaves.dispose(); tree.geometry.dispose(); tree.material.dispose(); geometry.dispose(); material.dispose(); } };
+  for (const chunk of chunks.values()) for (const mesh of [chunk.branches, chunk.leaves]) {
+    mesh.instanceMatrix.needsUpdate = true; mesh.castShadow = mesh.receiveShadow = true;
+    mesh.computeBoundingSphere(); group.add(mesh);
+  }
+  return { group, dispose() {
+    for (const chunk of chunks.values()) { chunk.branches.dispose(); chunk.leaves.dispose(); }
+    tree.geometry.dispose(); tree.material.dispose(); geometry.dispose(); material.dispose();
+  } };
 }

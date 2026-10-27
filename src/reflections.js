@@ -1,10 +1,9 @@
 import * as THREE from 'three/webgpu';
 import { CITY } from './plan.js';
 
-// Capture a compact, cheap city proxy from the selected nearby intersection. It gives
-// curved glazing a recognisable urban environment, without rendering six copies of
-// the detailed city each frame. It is an approximate local probe (not SSR/RT).
-export function makeCityReflection(renderer, plan, skyTexture, sunDirection, lightColor, anchor = { x: 0, z: 0 }) {
+// A compact proxy lets the renderer capture one cubemap face per frame. The
+// incomplete target is never exposed as the scene environment.
+export function startCityReflection(renderer, plan, skyTexture, sunDirection, lightColor, anchor = { x: 0, z: 0 }) {
   const scene = new THREE.Scene(); scene.background = skyTexture;
   scene.add(new THREE.HemisphereLight(0xd4e0e5, 0x756b5f, 1.5));
   const sun = new THREE.DirectionalLight(lightColor, 2); sun.position.copy(sunDirection).multiplyScalar(200); scene.add(sun);
@@ -42,7 +41,40 @@ export function makeCityReflection(renderer, plan, skyTexture, sunDirection, lig
   const ground = new THREE.Mesh(groundGeometry, groundMaterial); ground.rotation.x = -Math.PI / 2; scene.add(ground);
   const target = new THREE.CubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
   const camera = new THREE.CubeCamera(.1, 500, target); camera.position.set(anchor.x, 8, anchor.z); scene.add(camera);
-  camera.update(renderer, scene);
-  boxGeometry.dispose(); material.dispose(); mesh.dispose(); stripMaterial.dispose(); stripMesh.dispose(); groundGeometry.dispose(); groundMaterial.dispose();
-  return target;
+  if (camera.coordinateSystem !== renderer.coordinateSystem) {
+    camera.coordinateSystem = renderer.coordinateSystem; camera.updateCoordinateSystem();
+  }
+  camera.updateMatrixWorld(true);
+  const generateMipmaps = target.texture.generateMipmaps;
+  let face = 0, cleaned = false, cancelled = false;
+  function cleanup() {
+    if (cleaned) return;
+    cleaned = true;
+    boxGeometry.dispose(); material.dispose(); mesh.dispose(); stripMaterial.dispose(); stripMesh.dispose(); groundGeometry.dispose(); groundMaterial.dispose();
+  }
+  return {
+    target,
+    step() {
+      if (cancelled) return false;
+      if (face === 6) return true;
+      const previousTarget = renderer.getRenderTarget(), previousFace = renderer.getActiveCubeFace();
+      const previousMip = renderer.getActiveMipmapLevel(), xrEnabled = renderer.xr.enabled;
+      renderer.xr.enabled = false;
+      try {
+        // Match CubeCamera.update: mipmaps can only be generated after all faces exist.
+        target.texture.generateMipmaps = face === 5 ? generateMipmaps : false;
+        renderer.setRenderTarget(target, face, camera.activeMipmapLevel);
+        const reversed = renderer.isWebGLRenderer ? renderer.state.buffers.depth.getReversed() : renderer.reversedDepthBuffer;
+        if (reversed && renderer.autoClear === false) renderer.clearDepth();
+        renderer.render(scene, camera.children[face]);
+        face++;
+      } finally {
+        renderer.setRenderTarget(previousTarget, previousFace, previousMip);
+        renderer.xr.enabled = xrEnabled;
+      }
+      if (face === 6) { target.texture.needsPMREMUpdate = true; cleanup(); return true; }
+      return false;
+    },
+    cancel() { if (!cancelled) { cancelled = true; cleanup(); target.dispose(); } },
+  };
 }
