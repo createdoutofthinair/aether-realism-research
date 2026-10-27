@@ -1,6 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { color, float, floor, fract, fwidth, mix, mod, mx_noise_float, normalWorldGeometry, positionWorld, smoothstep, vec3 } from 'three/tsl';
 import { bumpNormal } from 'three/addons/generators/city/CityGeneratorUtils.js';
+import { attribute, select } from 'three/tsl';
+import { scannedSurfaceNodes } from './surfaceNodes.js';
 
 // World-space structure, age and fine surface relief are evaluated per fragment.
 // The independent layers stay subtle and use derivatives to filter fine joints.
@@ -36,8 +38,8 @@ function mineral(hex, roughness = .83, scale = 2.2, relief = .008, masonry = nul
   return material;
 }
 
-export function makeMaterials() {
-  return {
+export function makeMaterials(library = null) {
+  const materials = {
     concrete: mineral(0xa69e90, .84, 3.5, .012, { w: 2.4, h: 1.1, joint: 0x79756f, depth: .003 }),
     limestone: mineral(0xc5baa6, .8, 2.2, .009, { w: 1.3, h: .55, joint: 0x81786e, depth: .004 }),
     brick: mineral(0x8d6958, .9, 3.4, .012, { w: .60, h: .25, joint: 0x8c8376, depth: .005, bond: true }),
@@ -59,4 +61,27 @@ export function makeMaterials() {
     greenery: new THREE.MeshStandardNodeMaterial({ color: 0x526749, roughness: 1 }),
     marking: new THREE.MeshStandardNodeMaterial({ color: 0xc0bbaf, roughness: .95 }),
   };
+  if (library) for (const [key, asset] of Object.entries(library.sets)) {
+    if (!materials[key]) continue;
+    const nodes = scannedSurfaceNodes(asset, library.weather);
+    const material = new THREE.MeshStandardNodeMaterial({ metalness: 0, roughness: .8 });
+    material.colorNode = nodes.albedo; material.roughnessNode = nodes.rough;
+    material.aoNode = nodes.ao; material.normalNode = nodes.normal;
+    materials[key].dispose(); materials[key] = material;
+  }
+  return materials;
+}
+
+// The heritage shader handles rooms, trim and shopfronts in one geometry. Only
+// wall and pier zones receive the photographed masonry, preserving its interiors.
+export function applyHeritageMaterial(material, library) {
+  const asset = library?.sets.brick; if (!asset) return material;
+  const nodes = scannedSurfaceNodes(asset, library.weather);
+  const wall = attribute('partId', 'float').lessThan(1.5);
+  const oldColor = material.colorNode, oldRoughness = material.roughnessNode, oldNormal = material.normalNode;
+  material.colorNode = select(wall, mix(nodes.albedo, oldColor, .18), oldColor);
+  material.roughnessNode = select(wall, nodes.rough, oldRoughness);
+  material.normalNode = select(wall, nodes.normal, oldNormal);
+  material.aoNode = select(wall, nodes.ao, float(1));
+  return material;
 }

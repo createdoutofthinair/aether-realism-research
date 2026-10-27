@@ -1,10 +1,10 @@
 import * as THREE from 'three/webgpu';
 import { CITY } from './plan.js';
 
-// Capture a compact, cheap city proxy once when seed or lighting changes. It gives
+// Capture a compact, cheap city proxy from the selected nearby intersection. It gives
 // curved glazing a recognisable urban environment, without rendering six copies of
-// the detailed city each frame. It is an approximate, shared probe (not SSR/RT).
-export function makeCityReflection(renderer, plan, skyTexture, sunDirection, lightColor) {
+// the detailed city each frame. It is an approximate local probe (not SSR/RT).
+export function makeCityReflection(renderer, plan, skyTexture, sunDirection, lightColor, anchor = { x: 0, z: 0 }) {
   const scene = new THREE.Scene(); scene.background = skyTexture;
   scene.add(new THREE.HemisphereLight(0xd4e0e5, 0x756b5f, 1.5));
   const sun = new THREE.DirectionalLight(lightColor, 2); sun.position.copy(sunDirection).multiplyScalar(200); scene.add(sun);
@@ -41,7 +41,7 @@ export function makeCityReflection(renderer, plan, skyTexture, sunDirection, lig
   const groundMaterial = new THREE.MeshStandardNodeMaterial({ color: 0x4c4c48, roughness: .95 });
   const ground = new THREE.Mesh(groundGeometry, groundMaterial); ground.rotation.x = -Math.PI / 2; scene.add(ground);
   const target = new THREE.CubeRenderTarget(256, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
-  const camera = new THREE.CubeCamera(.1, 500, target); camera.position.set(0, 8, 0); scene.add(camera);
+  const camera = new THREE.CubeCamera(.1, 500, target); camera.position.set(anchor.x, 8, anchor.z); scene.add(camera);
   camera.update(renderer, scene);
   boxGeometry.dispose(); material.dispose(); mesh.dispose(); stripMaterial.dispose(); stripMesh.dispose(); groundGeometry.dispose(); groundMaterial.dispose();
   return target;

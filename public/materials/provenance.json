@@ -1,0 +1,177 @@
+{
+  "red_brick": {
+    "name": "Red Brick",
+    "source_page": "https://polyhaven.com/a/red_brick",
+    "license": "CC0-1.0",
+    "authors": {
+      "Rob Tuytel": "All"
+    },
+    "width_m": 1.399999976158142,
+    "maps": {
+      "color": {
+        "path": "/materials/red_brick/color.jpg",
+        "bytes": 766044,
+        "sha256": "6dea3a2b5a3185ff48d299d182c405a9f787129d79677792db6de4afd81c47f6",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick/red_brick_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/red_brick/normal.jpg",
+        "bytes": 1052038,
+        "sha256": "99bd2c60dfdb02b011cc3551bd9ab51d9b0be2807e3ba8f7a53c8a4c945b2f87",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick/red_brick_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/red_brick/arm.jpg",
+        "bytes": 701031,
+        "sha256": "803019d7d99ec30066189fae8517aa33f927a0fcaecf185204ce93d33e07e7ab",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/red_brick/red_brick_arm_1k.jpg"
+      }
+    }
+  },
+  "concrete_slab_wall_02": {
+    "name": "Concrete Slab Wall 02",
+    "source_page": "https://polyhaven.com/a/concrete_slab_wall_02",
+    "license": "CC0-1.0",
+    "authors": {
+      "Amal Kumar": "All"
+    },
+    "width_m": 2.102315902709961,
+    "maps": {
+      "color": {
+        "path": "/materials/concrete_slab_wall_02/color.jpg",
+        "bytes": 595743,
+        "sha256": "9a8fa0596f3df64ed18f4e0b90c9fbb52af9ab189081fd91c4aaabda0a672724",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_slab_wall_02/concrete_slab_wall_02_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/concrete_slab_wall_02/normal.jpg",
+        "bytes": 600256,
+        "sha256": "11d235fe63e790f07c489530f3b8a7232dcfbfbaf46c6165923d71d03914d3e2",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_slab_wall_02/concrete_slab_wall_02_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/concrete_slab_wall_02/arm.jpg",
+        "bytes": 556241,
+        "sha256": "fd5a4999800ee8b631a42bd5f5b579be6cb89211eea63abeb905165de3daffa4",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_slab_wall_02/concrete_slab_wall_02_arm_1k.jpg"
+      }
+    }
+  },
+  "grey_plaster_03": {
+    "name": "Grey Plaster 03",
+    "source_page": "https://polyhaven.com/a/grey_plaster_03",
+    "license": "CC0-1.0",
+    "authors": {
+      "Rob Tuytel": "All"
+    },
+    "width_m": 1.0,
+    "maps": {
+      "color": {
+        "path": "/materials/grey_plaster_03/color.jpg",
+        "bytes": 486612,
+        "sha256": "b0952ccabee3f68a1962684a8bc2fe64101b92e569cfd13cf1d8c11b65f395d9",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/grey_plaster_03/normal.jpg",
+        "bytes": 467515,
+        "sha256": "801b002ad7a8872cc998080f9a0345b68e49708c09570050e09e1e0fb3af161d",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/grey_plaster_03/arm.jpg",
+        "bytes": 182473,
+        "sha256": "6a474794dc56b1906e993d550338c48864279bcc60ea3be35fd2373b64333ba9",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_arm_1k.jpg"
+      }
+    }
+  },
+  "sandstone_blocks_08": {
+    "name": "Sandstone Blocks 08",
+    "source_page": "https://polyhaven.com/a/sandstone_blocks_08",
+    "license": "CC0-1.0",
+    "authors": {
+      "Rob Tuytel": "All"
+    },
+    "width_m": 3.0,
+    "maps": {
+      "color": {
+        "path": "/materials/sandstone_blocks_08/color.jpg",
+        "bytes": 242776,
+        "sha256": "0cac65461ba33003b8a27b03c2b87f3393a824a9a98036c4c8de6182a1449369",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/sandstone_blocks_08/sandstone_blocks_08_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/sandstone_blocks_08/normal.jpg",
+        "bytes": 167040,
+        "sha256": "1203d5300dfc717db67220531fcdad75214d48b98d21114a155b3f01d54ab012",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/sandstone_blocks_08/sandstone_blocks_08_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/sandstone_blocks_08/arm.jpg",
+        "bytes": 58846,
+        "sha256": "4a211353047f52b9f0cf545e669fa8c29ac0d4ca87dd1f74e3a17f13d9a5b50d",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/sandstone_blocks_08/sandstone_blocks_08_arm_1k.jpg"
+      }
+    }
+  },
+  "concrete_pavement": {
+    "name": "Concrete Pavement",
+    "source_page": "https://polyhaven.com/a/concrete_pavement",
+    "license": "CC0-1.0",
+    "authors": {
+      "Charlotte Baglioni": "All"
+    },
+    "width_m": 1.8000000715255737,
+    "maps": {
+      "color": {
+        "path": "/materials/concrete_pavement/color.jpg",
+        "bytes": 926197,
+        "sha256": "70d3ff969a7421c7ae057b5d16386d11f5e59c6740db643352e1039413f419c4",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement/concrete_pavement_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/concrete_pavement/normal.jpg",
+        "bytes": 1184345,
+        "sha256": "a5009e409ff0f7b2d19e1316fe5e2b2b4f28e4a6b79990a664be69d4e8a0e690",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement/concrete_pavement_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/concrete_pavement/arm.jpg",
+        "bytes": 802384,
+        "sha256": "2895506708adad25d64c3d7c3d0f922a6df0468af4a9afe3d5d3a0fb35bb3afd",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_pavement/concrete_pavement_arm_1k.jpg"
+      }
+    }
+  },
+  "asphalt_03": {
+    "name": "Asphalt 03",
+    "source_page": "https://polyhaven.com/a/asphalt_03",
+    "license": "CC0-1.0",
+    "authors": {
+      "Dario Barresi": "processing",
+      "Charlotte Baglioni": "photography"
+    },
+    "width_m": 2.049999713897705,
+    "maps": {
+      "color": {
+        "path": "/materials/asphalt_03/color.jpg",
+        "bytes": 788840,
+        "sha256": "95ad02e2631c41cf9fdd6a37596cf75adb4fb8a8b6880567cc78ed1c41dc5681",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_03/asphalt_03_diff_1k.jpg"
+      },
+      "normal": {
+        "path": "/materials/asphalt_03/normal.jpg",
+        "bytes": 974676,
+        "sha256": "978de8349ce2e9989325099a6fd1f5ea6b2826528e1264606a5c51296b1e2888",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_03/asphalt_03_nor_gl_1k.jpg"
+      },
+      "arm": {
+        "path": "/materials/asphalt_03/arm.jpg",
+        "bytes": 1053867,
+        "sha256": "36e898a43fd828e71f5bc08fa0f86dc2c7338194c87eb6a2b30d7216318b9f31",
+        "source_url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_03/asphalt_03_arm_1k.jpg"
+      }
+    }
+  }
+}

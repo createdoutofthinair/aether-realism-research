@@ -97,13 +97,13 @@ For each surface preserve the difference between:
 
 Combine procedural evaluation with authored/scanned materials where it makes sense. For production, evaluate stochastic/hex tiling for low-structure layers [4,5]; do not arbitrarily rotate brick bonds or run procedural noise through windows. Derive colour, roughness and normal/height from a shared causal mask when plausible. Ensure gradients and mipmaps work under oblique viewing angles. Where possible use triplanar or explicit world/local projection with derivative-correct filtering; prevent projection from swimming as the world origin shifts.
 
-**In the current experiment:** GPU-evaluated, world-space colour/roughness/noise and derivative bump for mineral and ground surfaces, plus Three.js's procedural brick material on historic buildings. It has no external image texture set, scanned materials, decals, stochastic hex-tiling implementation, virtual texturing or physically simulated aging. Resolution of procedural detail is evaluated per pixel, not stored in a 1024 × 1024 image.
+**In the current experiment:** six 1K photographic PBR sets use coordinated colour, roughness and normal weathering in world space. Asphalt and plaster use stochastic hex tiling; masonry and paving retain aligned structure. Historic walls receive the brick set without painting over windows. There are no decals, virtual texturing or physically simulated aging. See [MATERIAL_SYSTEM.md](MATERIAL_SYSTEM.md) for sources, memory cost, implementation and production steps.
 
 ### 5.2 Glass
 
 Real glass is dielectric and its appearance varies with viewing angle, thickness, dirt, interior illumination and surroundings. For a city, combine a restrained environment reflection, facade depth, differentiated interior occupancy, and physically credible frames; avoid relying on black or overly metallic windows. Screen-space reflections miss off-screen geometry and need fallback to probes/environment maps. Parallax interior mapping can provide depth but must be temporally stable and avoid repeated identical rooms.
 
-The prototype uses shader-generated interiors for generic rectangular panes and heritage buildings, plus reflective opaque panels on curved towers. A single shared city-proxy cubemap supplies approximate reflections. None of these is physically accurate refractive multi-layer glazing or a local reflection probe.
+The prototype uses shader-generated interiors for generic rectangular panes and heritage buildings, plus reflective opaque panels on curved towers. A shared city-proxy cubemap updates near the player and supplies approximate reflections. None of these is physically accurate refractive multi-layer glazing or per-building parallax-correct reflection.
 
 ## 6. Lighting, shadows and cinematic image quality
 
@@ -114,7 +114,7 @@ The prototype uses shader-generated interiors for generic rectangular panes and 
 - PBR materials, sky/ground fill and screen-space ambient occlusion.
 - Tone mapping, modest bloom and FXAA; user-selectable light moods and render budgets.
 
-The prototype uses Three.js CSMShadowNode with three cascades at 1024, 2048 or 4096 per map depending on quality. Its environment probe captures simplified city silhouettes from one fixed location and is rebuilt when the seed or atmosphere changes; it is not a spatially local reflection, SSR or HDR sky probe. Ambient fill is not indirect global illumination. FXAA does not address all temporal shimmer. AO is screen-space and cannot see hidden geometry. Emissive windows do not cast light. These are deliberate limitations to investigate, not evidence of AAA quality.
+The prototype uses Three.js CSMShadowNode with three cascades at 1024, 2048 or 4096 per map depending on quality. Its environment probe captures simplified city silhouettes from an intersection near the player and is rebuilt when the seed or atmosphere changes; the shared result is not a per-building parallax-correct reflection, SSR or HDR sky probe. Ambient fill is not indirect global illumination. FXAA does not address all temporal shimmer. AO is screen-space and cannot see hidden geometry. Emissive windows do not cast light. These are deliberate limitations to investigate, not evidence of AAA quality.
 
 ### 6.2 Recommended production order
 
@@ -143,7 +143,7 @@ The user should be able to move from street scale to skyline without suddenly re
 - Split world into spatial chunks. Perform frustum and, when worthwhile, conservative occlusion culling. Keep collision and navigation independent from what happens to be visible.
 - Do not equate native mesh-shader research with browser WebGPU support. Compute culling and indirect draws can be investigated within the actual WebGPU capability set [9,17].
 
-**In the current experiment:** instanced boxes/cylinders for generic components, plus one generated mesh per historic building and instanced furniture. There is no streaming, hierarchical LOD, occlusion culling, GPU-driven indirect draw or impostor system. The static scene is deliberately small.
+**In the current experiment:** block-grouped instanced boxes/cylinders for generic components with frustum culling, plus one generated mesh per historic building and instanced furniture. There is no streaming, hierarchical LOD, occlusion culling, GPU-driven indirect draw or impostor system. The static scene is deliberately small.
 
 ## 8. Performance and commercial constraints
 
@@ -151,7 +151,7 @@ Decide target hardware and presentation resolution before committing to a techni
 
 Measure median and 95th/99th-percentile frame times, shader compilation stalls, total scene generation time, JS heap, estimated GPU memory, draw calls, visible triangles, texture bytes, shadow passes, AO and postprocessing cost. Use WebGPU timestamp queries only where supported, with a fallback when unavailable. Compare a fixed seed, camera path, viewport, quality preset, browser version and adapter; capture both stills and a moving sequence.
 
-For a commercial project, review every dependency, code example, texture, font, scan and reference asset for the actual distribution context. Three.js is MIT licensed; preserve the upstream notice [18]. A research paper is evidence, not an automatic code/asset licence. The prototype contains no downloaded third-party image assets; it uses Three.js generators and Google Fonts through the page stylesheet, with local font fallbacks. Run an attribution and licence audit before shipping, and pin dependencies.
+For a commercial project, review every dependency, code example, texture, font, scan and reference asset for the actual distribution context. Three.js is MIT licensed; preserve the upstream notice [18]. A research paper is evidence, not an automatic code/asset licence. The prototype includes six Poly Haven CC0 scanned material sets, uses Three.js generators and requests Google Fonts through the page stylesheet, with local font fallbacks. Source records and hashes are in the material provenance manifest. Run an attribution and licence audit before shipping, and pin dependencies.
 
 ## 9. Validation plan and acceptance gates
 

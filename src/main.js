@@ -8,6 +8,9 @@ import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import { makeCityReflection } from './reflections.js';
 import { buildCity } from './city.js';
 import { moveWithCollisions } from './plan.js';
+import { loadMaterialLibrary } from './materialLibrary.js';
+import { MATERIAL_CATALOG, materialMapPath } from './materialCatalog.js';
+import { probeAnchor, probeKey } from './probePolicy.js';
 import './style.css';
 
 const root = document.querySelector('#app');
@@ -31,20 +34,30 @@ root.innerHTML = `
     <select id="mood" aria-label="Lighting atmosphere"><option value="golden">Golden hour</option><option value="blue">Blue hour</option><option value="overcast">Soft overcast</option></select>
     <div class="field-head field-space"><label for="quality">RENDER QUALITY</label><span>GPU BUDGET</span></div>
     <select id="quality" aria-label="Render quality"><option value="balanced">Balanced</option><option value="high">High resolution</option><option value="low">Performance</option></select>
-    <p class="hint">Procedural geometry · PBR shading · screen-space AO</p>
+    <div class="field-head field-space"><label for="weather">SURFACE WEATHERING</label><span id="weather-value">80%</span></div>
+    <input id="weather" class="weather-range" type="range" min="0" max="150" value="80" aria-label="Surface weathering">
+    <button id="open-materials" class="library-button"><span>EXPLORE MATERIAL SETS</span><span>↗</span></button>
+    <p class="hint" id="maps-status">Loading material sets…</p>
   </main>
   <div class="walk-ui" id="walk-ui"><span class="crosshair">+</span><span>W A S D &nbsp; MOVE &nbsp; · &nbsp; MOUSE &nbsp; LOOK &nbsp; · &nbsp; SHIFT &nbsp; RUN &nbsp; · &nbsp; ESC &nbsp; RELEASE</span></div>
   <footer class="footer">
     <div class="footer-copy"><span class="footer-line"></span><div><strong>STREET LEVEL</strong><small>Made to be explored</small></div></div>
     <div class="footer-actions"><button id="overview" class="outline-button">OVERVIEW</button><button id="walk" class="primary-button">ENTER THE CITY <span>↗</span></button></div>
   </footer>
+  <dialog class="material-dialog" id="material-dialog" aria-labelledby="material-title">
+    <div class="material-heading"><div><div class="eyebrow">SURFACE LIBRARY / 01</div><h2 id="material-title">Materials built for the city</h2><p>Photographed PBR surfaces with world-scale procedural wear.</p></div><button id="close-materials" class="close-dialog" aria-label="Close material library">×</button></div>
+    <div class="material-grid" id="material-grid"></div>
+    <p class="material-footer">Colour, normal and packed AO/roughness/metalness maps are included at 1024 × 1024. All six scans are CC0 from Poly Haven.</p>
+  </dialog>
   <div class="loader" id="loader"><div class="loader-inner"><div class="spinner"></div><strong id="loader-title">BUILDING THE CITY</strong><span id="loader-detail">Preparing WebGPU and architectural modules…</span></div></div>
   <div class="failure" id="failure" hidden><div><span class="eyebrow">DEVICE NOT READY</span><h2 id="failure-title">WebGPU is unavailable</h2><p id="failure-detail"></p><button id="retry" class="outline-button">TRY AGAIN</button></div></div>
 `;
 
 const $ = id => document.getElementById(id);
-let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode, csm, reflectionTarget;
-let environmentTexture;
+let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode, csm;
+let environmentTexture, materialLibrary;
+const reflectionCache = new Map();
+let currentProbeKey = null, nextProbeCheck = 0, probeScheduled = false;
 let mode = 'walk';
 let previousTime = 0, elapsed = 0, frames = 0;
 let yaw = 0, pitch = 0;
@@ -72,6 +85,30 @@ function environment(mood) {
   return texture;
 }
 
+function clearReflectionCache() {
+  for (const target of reflectionCache.values()) target.dispose();
+  reflectionCache.clear(); currentProbeKey = null;
+}
+
+function updateReflectionProbe() {
+  if (!scene || !city || !environmentTexture) return;
+  const anchor = probeAnchor(camera.position.x, camera.position.z), key = probeKey(anchor);
+  if (key === currentProbeKey) return;
+  let target = reflectionCache.get(key);
+  if (!target) {
+    const p = MOODS[$('mood').value];
+    target = makeCityReflection(renderer, city.plan, environmentTexture, new THREE.Vector3(...p.sun).normalize(), p.sunColor, anchor);
+    reflectionCache.set(key, target);
+    if (reflectionCache.size > 4) {
+      const oldestKey = reflectionCache.keys().next().value;
+      reflectionCache.get(oldestKey).dispose(); reflectionCache.delete(oldestKey);
+    }
+  } else {
+    reflectionCache.delete(key); reflectionCache.set(key, target);
+  }
+  scene.environment = target.texture; currentProbeKey = key;
+}
+
 function applyMood() {
   if (!scene || !city) return;
   const p = MOODS[$('mood').value];
@@ -83,11 +120,9 @@ function applyMood() {
   scene.fog.color.set(p.fog); scene.fog.density = p.density;
   renderer.toneMappingExposure = p.exposure;
   city.materials.glassWarm.emissiveIntensity = p.warm;
-  const oldSky = environmentTexture, oldReflection = reflectionTarget;
-  environmentTexture = environment(p);
-  reflectionTarget = makeCityReflection(renderer, city.plan, environmentTexture, direction, p.sunColor);
-  scene.environment = reflectionTarget.texture;
-  oldReflection?.dispose(); oldSky?.dispose();
+  const oldSky = environmentTexture;
+  scene.environment = null; clearReflectionCache(); environmentTexture = environment(p);
+  updateReflectionProbe(); oldSky?.dispose();
 }
 
 function applyQuality() {
@@ -133,7 +168,7 @@ async function rebuild() {
   if (document.pointerLockElement) document.exitPointerLock();
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   try {
-    const next = buildCity(seed);
+    const next = buildCity(seed, materialLibrary);
     city?.dispose(); city = next; scene.add(city.group);
     $('building-count').textContent = String(city.plan.buildings.length).padStart(2, '0');
     resetWalk(); applyMood();
@@ -190,6 +225,12 @@ async function init() {
     pipeline = new THREE.RenderPipeline(renderer); pipeline.outputColorTransform = false;
     pipeline.outputNode = fxaa(renderOutput(sceneColor.add(glow)));
     applyQuality();
+    setLoading('LOADING MATERIALS', 'Preparing photographed colour, normal and surface maps…');
+    materialLibrary = await loadMaterialLibrary({ base: import.meta.env.BASE_URL, anisotropy: renderer.getMaxAnisotropy(),
+      onProgress: (done, total) => { $('loader-detail').textContent = `Preparing material sets ${done} / ${total}…`; } });
+    $('maps-status').textContent = materialLibrary.errors.length
+      ? `${6 - materialLibrary.errors.length} / 6 material sets loaded; the rest use procedural fallback.`
+      : '6 material sets · 1K PBR maps · GPU weathering';
     await rebuild();
     renderer.setAnimationLoop(frame);
     renderer.domElement.addEventListener('click', () => { if (mode === 'walk' && document.pointerLockElement !== renderer.domElement) enterWalk(); });
@@ -211,6 +252,15 @@ function frame(now) {
     camera.position.x = p.x; camera.position.z = p.z;
   }
   pipeline.render();
+  // Probe captures are deliberately infrequent and based on nearby road
+  // intersections. A bounded cache avoids capture on every return visit.
+  if (mode === 'walk' && now >= nextProbeCheck && !probeScheduled) {
+    nextProbeCheck = now + 1800;
+    if (probeKey(probeAnchor(camera.position.x, camera.position.z)) !== currentProbeKey) {
+      probeScheduled = true;
+      requestAnimationFrame(() => { probeScheduled = false; if (mode === 'walk') updateReflectionProbe(); });
+    }
+  }
   elapsed += frameTime; frames++;
   if (elapsed >= .8) { $('fps').textContent = Math.round(frames / elapsed); frames = 0; elapsed = 0; }
 }
@@ -219,6 +269,13 @@ $('generate').addEventListener('click', rebuild);
 $('seed').addEventListener('keydown', event => { if (event.key === 'Enter') rebuild(); });
 $('mood').addEventListener('change', applyMood); $('quality').addEventListener('change', applyQuality);
 $('overview').addEventListener('click', setOverview); $('walk').addEventListener('click', enterWalk);
+$('weather').addEventListener('input', event => {
+  const amount = Number(event.target.value); $('weather-value').textContent = `${amount}%`;
+  if (materialLibrary) materialLibrary.weather.value = amount / 100;
+});
+$('material-grid').innerHTML = MATERIAL_CATALOG.map(item => `<a class="material-card" href="https://polyhaven.com/a/${item.id}" target="_blank" rel="noopener noreferrer"><img src="${materialMapPath(import.meta.env.BASE_URL, item.id, 'color')}" alt="" loading="lazy"><div><strong>${item.name}</strong><small>1K PBR · ${item.metres.toFixed(1)} m tile</small><span>${item.pattern === 'stochastic' ? 'ANTI-REPETITION' : 'ALIGNED STRUCTURE'} ↗</span></div></a>`).join('');
+$('open-materials').addEventListener('click', () => $('material-dialog').showModal());
+$('close-materials').addEventListener('click', () => $('material-dialog').close());
 $('retry').addEventListener('click', () => location.reload());
 window.addEventListener('resize', () => { if (!renderer || !camera) return; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (csm?.camera) csm.updateFrustums(); renderer.setSize(innerWidth, innerHeight); });
 window.addEventListener('keydown', e => { if (document.pointerLockElement) { keys.add(e.code); if (e.code === 'KeyR') resetWalk(); e.preventDefault(); } });

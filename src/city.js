@@ -7,10 +7,10 @@ import { StreetlightGenerator } from 'three/addons/generators/city/StreetlightGe
 import { CarGenerator } from 'three/addons/generators/city/CarGenerator.js';
 import { BenchGenerator } from 'three/addons/generators/city/BenchGenerator.js';
 import { CITY, planCity, randomFromSeed } from './plan.js';
-import { makeMaterials } from './materials.js';
+import { makeMaterials, applyHeritageMaterial } from './materials.js';
 
-// Each material/geometry pair is instanced, keeping architectural repetition on
-// the GPU without forcing the same silhouette or layout on every building.
+// Instances share materials, but are also grouped by block. Three.js can then
+// frustum-cull whole groups instead of drawing every facade across the city.
 class Batches {
   constructor(materials) {
     this.materials = materials;
@@ -24,20 +24,22 @@ class Batches {
     if (w <= 0 || h <= 0 || d <= 0) return;
     if (!this.materials[key]) throw new Error(`Unknown city material: ${key}`);
     this.temp.position.set(x, y, z); this.temp.rotation.set(0, yaw, 0); this.temp.scale.set(w, h, d); this.temp.updateMatrix();
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(this.temp.matrix.clone());
+    const cellX = Math.floor(x / CITY.span), cellZ = Math.floor(z / CITY.span);
+    const batchKey = `${key}:${cellX},${cellZ}`;
+    if (!map.has(batchKey)) map.set(batchKey, { material: key, matrices: [] });
+    map.get(batchKey).matrices.push(this.temp.matrix.clone());
   }
   box(key, x, y, z, w, h, d, yaw = 0) { this.add(this.boxes, key, x, y, z, w, h, d, yaw); }
   cylinder(key, x, y, z, r, h, yaw = 0) { this.add(this.cylinders, key, x, y, z, r, h, r, yaw); }
   build(group) {
-    for (const [kind, map] of [[0, this.boxes], [1, this.cylinders]]) for (const [key, matrices] of map) {
-      const mesh = new THREE.InstancedMesh(this.geometries[kind], this.materials[key], matrices.length);
-      mesh.name = `${kind ? 'cylinder' : 'box'}:${key}`;
+    for (const [kind, map] of [[0, this.boxes], [1, this.cylinders]]) for (const [batchKey, { material, matrices }] of map) {
+      const mesh = new THREE.InstancedMesh(this.geometries[kind], this.materials[material], matrices.length);
+      mesh.name = `${kind ? 'cylinder' : 'box'}:${batchKey}`;
       for (let i = 0; i < matrices.length; i++) mesh.setMatrixAt(i, matrices[i]);
       mesh.instanceMatrix.needsUpdate = true;
       mesh.receiveShadow = true;
       // Glazing and painted markings should not create offset self shadows.
-      mesh.castShadow = !['glass', 'glassMid', 'glassDark', 'glassWarm', 'marking'].includes(key);
+      mesh.castShadow = !['glass', 'glassMid', 'glassDark', 'glassWarm', 'marking'].includes(material);
       mesh.computeBoundingSphere();
       group.add(mesh);
     }
@@ -214,13 +216,13 @@ function placeMatrix(x, z, yaw = 0, scale = 1) {
     new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), new THREE.Vector3(scale, scale, scale));
 }
 
-function streets(batch, plan) {
+function streets(batch, plan, library) {
   const half = CITY.half, street = CITY.street, trees = [], lights = [], benches = [], cars = [];
   batch.box('road', 0, -.22, 0, half * 2, .4, half * 2);
   for (const block of plan.blocks) {
     batch.box('sidewalk', block.x, CITY.curb / 2, block.z, CITY.block, CITY.curb, CITY.block);
     // Fine pavement score lines, kept in geometry rather than a repeated image.
-    for (let i = -5; i <= 5; i++) {
+    if (!library?.sets.sidewalk) for (let i = -5; i <= 5; i++) {
       const off = i * 4;
       batch.box('concrete', block.x + off, CITY.curb + .002, block.z, .025, .006, CITY.block);
       batch.box('concrete', block.x, CITY.curb + .003, block.z + off, CITY.block, .006, .025);
@@ -263,9 +265,9 @@ function streets(batch, plan) {
   return { trees, lights, benches, cars };
 }
 
-export function buildCity(seed) {
-  const plan = planCity(seed), group = new THREE.Group(), materials = makeMaterials();
-  const batch = new Batches(materials), furniture = streets(batch, plan), resources = [];
+export function buildCity(seed, library = null) {
+  const plan = planCity(seed), group = new THREE.Group(), materials = makeMaterials(library);
+  const batch = new Batches(materials), furniture = streets(batch, plan, library), resources = [];
   for (const b of plan.buildings) {
     if (b.kind === 'heritage') {
       const generator = new SkyscraperGenerator({
@@ -274,7 +276,7 @@ export function buildCity(seed) {
         bayWidth: 2.4 + b.variant, pierWidth: .65, pierDepth: .4,
         chamferWidth: b.variant > .55 ? 2 : 0, chamferCornerX: 1, chamferCornerZ: 1,
         setbackDepth: b.variant > .6 ? .45 : 0, stringCourseEvery: 4,
-      }, createSkyscraperMaterial(color([0xb79a82, 0xd0bda0, 0x8b7164, 0xc2b8a7][b.palette])));
+      }, applyHeritageMaterial(createSkyscraperMaterial(color([0xb79a82, 0xd0bda0, 0x8b7164, 0xc2b8a7][b.palette])), library));
       const mesh = generator.build(); mesh.position.set(b.x, CITY.curb, b.z);
       mesh.castShadow = mesh.receiveShadow = true; group.add(mesh); resources.push(generator);
     } else if (b.kind === 'round' || b.kind === 'lobed') roundedBuilding(batch, b);

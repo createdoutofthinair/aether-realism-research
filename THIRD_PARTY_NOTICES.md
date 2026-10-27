@@ -23,3 +23,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+
+## Poly Haven material sets
+
+The included photographic PBR maps are distributed by [Poly Haven under CC0 1.0](https://polyhaven.com/license). Attribution is not a condition of CC0, but the project records the contributors and sources here and retains source URLs and SHA-256 checksums in `public/materials/provenance.json`.
+
+| Asset | Contributor(s) |
+| --- | --- |
+| [Red Brick](https://polyhaven.com/a/red_brick) | Rob Tuytel |
+| [Concrete Slab Wall 02](https://polyhaven.com/a/concrete_slab_wall_02) | Amal Kumar |
+| [Grey Plaster 03](https://polyhaven.com/a/grey_plaster_03) | Rob Tuytel |
+| [Sandstone Blocks 08](https://polyhaven.com/a/sandstone_blocks_08) | Rob Tuytel |
+| [Concrete Pavement](https://polyhaven.com/a/concrete_pavement) | Charlotte Baglioni |
+| [Asphalt 03](https://polyhaven.com/a/asphalt_03) | Charlotte Baglioni (photography), Dario Barresi (processing) |
