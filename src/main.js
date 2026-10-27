@@ -146,7 +146,12 @@ async function init() {
     renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
-    await renderer.init();
+    try {
+      await renderer.init();
+    } catch (cause) {
+      const detail = cause instanceof Error ? ` Details: ${cause.message}` : '';
+      throw new Error(`A WebGPU graphics device could not be started. Try a recent desktop browser with hardware acceleration enabled.${detail}`);
+    }
     if (!renderer.backend.isWebGPUBackend) throw new Error('The browser could not initialise a WebGPU adapter. A WebGL fallback is not used by this research prototype.');
     renderer.backend.device.lost.then(info => {
       renderer.setAnimationLoop(null);
