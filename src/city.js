@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { color } from 'three/tsl';
 import { SkyscraperGenerator, createSkyscraperMaterial } from 'three/addons/generators/city/SkyscraperGenerator.js';
-import { StreetTreeGenerator } from 'three/addons/generators/city/StreetTreeGenerator.js';
+import { GlazingBatch } from './glazing.js';
+import { buildTrees } from './foliage.js';
 import { StreetlightGenerator } from 'three/addons/generators/city/StreetlightGenerator.js';
 import { CarGenerator } from 'three/addons/generators/city/CarGenerator.js';
 import { BenchGenerator } from 'three/addons/generators/city/BenchGenerator.js';
@@ -13,6 +14,7 @@ import { makeMaterials } from './materials.js';
 class Batches {
   constructor(materials) {
     this.materials = materials;
+    this.glazing = new GlazingBatch();
     this.boxes = new Map();
     this.cylinders = new Map();
     this.temp = new THREE.Object3D();
@@ -20,6 +22,7 @@ class Batches {
   }
   add(map, key, x, y, z, w, h, d, yaw = 0) {
     if (w <= 0 || h <= 0 || d <= 0) return;
+    if (!this.materials[key]) throw new Error(`Unknown city material: ${key}`);
     this.temp.position.set(x, y, z); this.temp.rotation.set(0, yaw, 0); this.temp.scale.set(w, h, d); this.temp.updateMatrix();
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(this.temp.matrix.clone());
@@ -34,63 +37,107 @@ class Batches {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.receiveShadow = true;
       // Glazing and painted markings should not create offset self shadows.
-      mesh.castShadow = !['glass', 'glassDark', 'glassWarm', 'marking'].includes(key);
+      mesh.castShadow = !['glass', 'glassMid', 'glassDark', 'glassWarm', 'marking'].includes(key);
       mesh.computeBoundingSphere();
       group.add(mesh);
     }
+    group.add(this.glazing.build());
   }
-  dispose() { this.geometries.forEach(g => g.dispose()); }
+  dispose() { this.geometries.forEach(g => g.dispose()); this.glazing.dispose(); }
 }
 
-function facade(batch, rect, bottom, floors, fh, skin, type, random) {
-  const { x, z, w, d } = rect;
+// Position a facade component in a consistent face-local frame. Offset is measured
+// outward from the face, so a negative window offset produces a genuine reveal.
+function faceBox(batch, key, r, axis, sign, along, y, offset, width, height, depth) {
+  const x = axis === 'x' ? r.x + sign * (r.w / 2 + offset) : r.x + along;
+  const z = axis === 'z' ? r.z + sign * (r.d / 2 + offset) : r.z + along;
+  batch.box(key, x, y, z, axis === 'x' ? depth : width, height, axis === 'z' ? depth : width);
+}
+
+function facade(batch, r, bottom, floors, fh, skin, type, random) {
   for (let floor = 0; floor < floors; floor++) {
     const yy = bottom + floor * fh;
     const ground = floor === 0 && bottom < 1;
+    const modern = type === 'modern';
     for (const axis of ['x', 'z']) for (const sign of [-1, 1]) {
-      const len = axis === 'x' ? d : w;
-      const count = Math.max(2, Math.floor(len / (type === 'modern' ? 2.7 : 3.4)));
+      const len = axis === 'x' ? r.d : r.w;
+      const count = Math.max(2, Math.floor(len / (modern ? 2.5 : 3.35)));
       const spacing = len / count;
-      const winHeight = ground ? fh * .72 : fh * (type === 'modern' ? .70 : .55);
+      const winHeight = ground ? fh * .68 : fh * (modern ? .72 : .58);
+      const winBottom = ground ? .34 : fh * (modern ? .19 : .22);
+      const winTop = winBottom + winHeight;
+      const paneWidth = spacing * (ground ? .83 : modern ? .84 : .67);
+      const wallDepth = .40, faceOffset = -.09;
+      // Solid piers and spandrels frame an actual opening. The room plane sits
+      // behind the front wall rather than being pasted onto a solid box.
+      faceBox(batch, skin, r, axis, sign, 0, yy + winBottom / 2, faceOffset, len, winBottom, wallDepth);
+      faceBox(batch, skin, r, axis, sign, 0, yy + (winTop + fh) / 2, faceOffset, len, fh - winTop, wallDepth);
+      for (let p = 0; p <= count; p++) {
+        const along = -len/2 + p * spacing;
+        const pierWidth = spacing - paneWidth;
+        // Half-piers at corners keep neighbouring faces flush with the footprint.
+        const width = (p === 0 || p === count) ? pierWidth * .5 : pierWidth;
+        const shift = p === 0 ? width*.5 : p === count ? -width*.5 : 0;
+        faceBox(batch, skin, r, axis, sign, along + shift, yy + winBottom + winHeight / 2, faceOffset, width, winHeight, wallDepth);
+      }
       for (let bay = 0; bay < count; bay++) {
-        const along = -len / 2 + (bay + .5) * spacing;
-        const material = random() < .11 && !ground ? 'glassWarm' : (type === 'modern' ? 'glass' : 'glassDark');
-        const wx = axis === 'x' ? x + sign * (w / 2 + .025) : x + along;
-        const wz = axis === 'z' ? z + sign * (d / 2 + .025) : z + along;
-        const pw = spacing * (ground ? .88 : type === 'modern' ? .88 : .65);
-        const wy = yy + (ground ? fh * .46 : fh * .54);
-        batch.box(material, wx, wy, wz, axis === 'x' ? .065 : pw, winHeight, axis === 'z' ? .065 : pw);
-        // A projecting frame turns the opening into a dimensional facade component.
-        const frameY = wy - winHeight / 2 - .035;
-        batch.box('metal', wx + (axis === 'x' ? sign * .045 : 0), frameY, wz + (axis === 'z' ? sign * .045 : 0),
-          axis === 'x' ? .17 : pw + .14, .11, axis === 'z' ? .17 : pw + .14);
-        if (type === 'residential' && !ground && floor % 2 === 1 && bay % 2 === 0 && random() < .66) {
-          const projection = 1.0;
-          const cx = wx + (axis === 'x' ? sign * projection * .5 : 0);
-          const cz = wz + (axis === 'z' ? sign * projection * .5 : 0);
-          batch.box(skin, cx, yy + .2, cz, axis === 'x' ? projection : pw, .16, axis === 'z' ? projection : pw);
-          batch.box('metal', wx + (axis === 'x' ? sign * projection : 0), yy + 1.12, wz + (axis === 'z' ? sign * projection : 0),
-            axis === 'x' ? .07 : pw, .055, axis === 'z' ? .07 : pw);
+        const along = -len/2 + (bay + .5) * spacing;
+        const wy = yy + winBottom + winHeight / 2;
+        const x = axis === 'x' ? r.x + sign * (r.w/2 - .25) : r.x + along;
+        const z = axis === 'z' ? r.z + sign * (r.d/2 - .25) : r.z + along;
+        batch.glazing.add({ x, y: wy, z, width: paneWidth, height: winHeight, axis, sign });
+        // Deep surrounds, a slim central mullion and a projecting sill catch light.
+        for (const side of [-1, 1]) {
+          faceBox(batch, 'windowFrame', r, axis, sign, along + side * (paneWidth/2 - .045), wy, -.13, .09, winHeight, .26);
         }
-        if (ground && bay % 3 === 1 && type !== 'modern') {
-          const ax = wx + (axis === 'x' ? sign * .45 : 0), az = wz + (axis === 'z' ? sign * .45 : 0);
-          batch.box('dark', ax, yy + fh * .83, az, axis === 'x' ? .9 : pw, .1, axis === 'z' ? .9 : pw);
+        faceBox(batch, 'windowFrame', r, axis, sign, along, yy + winBottom + .045, -.13, paneWidth, .09, .26);
+        faceBox(batch, 'windowFrame', r, axis, sign, along, yy + winTop - .045, -.13, paneWidth, .09, .26);
+        if (!ground && (modern || paneWidth > 1.65)) {
+          faceBox(batch, 'windowFrame', r, axis, sign, along, wy, -.20, .055, winHeight, .12);
+        }
+        faceBox(batch, modern ? 'metal' : skin, r, axis, sign, along, yy + winBottom - .055, .035, paneWidth + .18, .11, .36);
+        // A few partially lowered blinds, with slats, create occupied windows.
+        const blind = random();
+        if (!ground && blind < .23) {
+          const shadeH = winHeight * (.22 + random() * .42), shadeY = yy + winTop - shadeH/2;
+          faceBox(batch, blind < .11 ? 'blindWarm' : 'blindCool', r, axis, sign, along, shadeY, -.235, paneWidth - .10, shadeH, .012);
+          for (let i = 1; i <= 3; i++) {
+            faceBox(batch, 'windowFrame', r, axis, sign, along, shadeY + shadeH/2 - shadeH * i/4, -.225, paneWidth - .12, .022, .025);
+          }
+        }
+        if (type === 'residential' && !ground && floor % 2 === 1 && bay % 2 === 0 && random() < .45) {
+          const projection = .95;
+          faceBox(batch, skin, r, axis, sign, along, yy + .14, projection/2, paneWidth + .25, .16, projection);
+          faceBox(batch, 'windowFrame', r, axis, sign, along, yy + 1.10, projection, paneWidth + .25, .065, .065);
+          for (let k = -2; k <= 2; k++) faceBox(batch, 'windowFrame', r, axis, sign, along + k * paneWidth/4, yy + .62, projection, .045, .95, .045);
+        }
+        if (!ground && !modern && random() < .035) {
+          faceBox(batch, 'metal', r, axis, sign, along, yy + winBottom + .18, .16, paneWidth * .48, .30, .36);
         }
       }
-      // Continuous floor bands and slender mullions give the silhouette genuine depth.
-      const faceX = axis === 'x' ? x + sign * (w / 2 + .07) : x;
-      const faceZ = axis === 'z' ? z + sign * (d / 2 + .07) : z;
-      batch.box(type === 'modern' ? 'metal' : skin, faceX, yy + fh - .12, faceZ,
-        axis === 'x' ? .16 : len, .22, axis === 'z' ? .16 : len);
+      // A different rhythm at the street base and on the upper shaft.
+      const bandKey = modern ? 'metal' : skin;
+      faceBox(batch, bandKey, r, axis, sign, 0, yy + fh - .08, .04, len + .05, ground ? .25 : .15, ground ? .30 : .20);
+      if (ground) {
+        faceBox(batch, 'dark', r, axis, sign, 0, yy + fh - .48, .07, len * .93, .46, .20);
+        if (!modern) for (let bay = 1; bay < count; bay += 3) {
+          const along = -len/2 + (bay + .5) * spacing;
+          faceBox(batch, 'awning', r, axis, sign, along, yy + fh - .72, .45, paneWidth + .15, .12, .95);
+        }
+      }
     }
   }
 }
 
 function volume(batch, r, bottom, floors, fh, skin, type, random) {
   const height = floors * fh;
-  batch.box(skin, r.x, bottom + height / 2, r.z, r.w, height, r.d);
+  // Core set back from the facade supplies shadowed backing; the exterior is
+  // assembled from piers, spandrels, recessed glazing and window frames.
+  batch.box(skin, r.x, bottom + height / 2, r.z, Math.max(.5, r.w - 1.25), height, Math.max(.5, r.d - 1.25));
   facade(batch, r, bottom, floors, fh, skin, type, random);
-  batch.box('dark', r.x, bottom + height + .15, r.z, r.w + .25, .3, r.d + .25);
+  batch.box('dark', r.x, bottom + height + .13, r.z, r.w + .20, .26, r.d + .20);
+  // A shallow cornice gives the building a readable roofline.
+  batch.box(skin, r.x, bottom + height + .32, r.z, r.w + .45, .16, r.d + .45);
 }
 
 function roofEquipment(batch, b, roof) {
@@ -108,12 +155,18 @@ function angularBuilding(batch, b) {
   const skins = ['concrete', 'limestone', 'brick', 'pale'];
   const skin = skins[b.palette], fh = b.floorHeight, base = CITY.curb;
   const r = { x: b.x, z: b.z, w: b.width, d: b.depth };
-  if (b.kind === 'stepped') {
-    const lower = Math.max(3, Math.floor(b.floors * (.38 + b.variant * .14)));
+  if (b.kind === 'stepped' || (b.kind === 'modern' && b.variant > .28)) {
+    // Podium and displaced upper mass: this changes the silhouette as well as
+    // the facade. Keep both inside the ground-floor footprint for collision.
+    const lower = Math.max(3, Math.floor(b.floors * (.28 + b.variant * .17)));
     volume(batch, r, base, lower, fh, skin, 'modern', random);
-    const upper = { ...r, x: r.x + .5, z: r.z - .4, w: r.w * .72, d: r.d * .72 };
+    const insetX = r.w * (.12 + b.variant * .06), insetZ = r.d * (.12 + b.variant * .06);
+    const upper = { ...r, x: r.x + insetX * .28, z: r.z - insetZ * .24, w: r.w - insetX * 2, d: r.d - insetZ * 2 };
     volume(batch, upper, base + lower * fh, b.floors - lower, fh, skin, 'modern', random);
-  } else if (b.kind === 'residential' && b.variant > .57) {
+    // A parapet at the terrace edge reads as a real level transition.
+    batch.box('metal', r.x, base + lower * fh + .7, r.z - r.d/2 + .12, r.w, .065, .065);
+    batch.box('metal', r.x - r.w/2 + .12, base + lower * fh + .7, r.z, .065, .065, r.d);
+  } else if (b.kind === 'residential' && b.variant > .53) {
     // Interlocking wings make an L-shaped footprint and break the street wall.
     const a = { x: r.x - r.w * .15, z: r.z, w: r.w * .70, d: r.d };
     const c = { x: r.x + r.w * .35, z: r.z - r.d * .24, w: r.w * .30, d: r.d * .52 };
@@ -128,22 +181,28 @@ function angularBuilding(batch, b) {
 function roundedBuilding(batch, b) {
   const random = randomFromSeed(b.seed), base = CITY.curb, fh = b.floorHeight;
   const r = Math.min(b.width, b.depth) * (b.kind === 'lobed' ? .24 : .47);
-  // Three joined circular wings create a recognisable lobed tower.
   const lobes = b.kind === 'lobed' ? [[-.60, 0], [.52, -.38], [.52, .38]] : [[0, 0]];
   for (const [ox, oz] of lobes) {
     const x = b.x + ox * r, z = b.z + oz * r;
     const levels = b.floors - (b.kind === 'lobed' && ox > 0 ? 2 : 0);
     const height = levels * fh;
-    batch.cylinder('glass', x, base + height / 2, z, r, height);
+    batch.cylinder('glassDark', x, base + height / 2, z, r - .04, height);
     batch.cylinder(b.palette % 2 ? 'limestone' : 'concrete', x, base + .55, z, r + .12, 1.1);
-    for (let f = 1; f <= levels; f++) {
-      batch.cylinder('metal', x, base + f * fh, z, r + .06, .14);
+    const panels = Math.max(16, Math.round(r * 4));
+    const panelWidth = 2 * Math.PI * r / panels * .91;
+    for (let f = 0; f < levels; f++) {
+      batch.cylinder('metal', x, base + (f+1) * fh, z, r + .075, .14);
+      for (let n = 0; n < panels; n++) {
+        const a = (n + .5) * Math.PI * 2 / panels;
+        const chance = random();
+        const key = chance < .055 ? 'glassWarm' : chance < .43 ? 'glassMid' : 'glass';
+        batch.box(key, x + Math.sin(a) * r, base + (f + .51) * fh, z + Math.cos(a) * r,
+          panelWidth, fh * .88, .055, a);
+      }
     }
-    // Real vertical fins wrap each lobe, tangent to the curved glass wall.
-    const fins = Math.max(12, Math.round(r * 3));
-    for (let n = 0; n < fins; n++) {
-      const a = n * Math.PI * 2 / fins;
-      batch.box('metal', x + Math.sin(a) * r, base + height / 2, z + Math.cos(a) * r, .12, height, .24, a);
+    for (let n = 0; n < panels; n++) {
+      const a = n * Math.PI * 2 / panels;
+      batch.box('metal', x + Math.sin(a) * r, base + height/2, z + Math.cos(a) * r, .075, height, .22, a);
     }
     batch.cylinder('dark', x, base + height + .18, z, r + .1, .36);
     if (random() > .4) batch.cylinder('metal', x, base + height + .7, z, r * .25, 1.0);
@@ -222,10 +281,11 @@ export function buildCity(seed) {
     else angularBuilding(batch, b);
   }
   batch.build(group);
-  for (const [Generator, placements] of [[StreetTreeGenerator, furniture.trees], [StreetlightGenerator, furniture.lights], [BenchGenerator, furniture.benches], [CarGenerator, furniture.cars]]) {
+  const trees = buildTrees(furniture.trees, seed); group.add(trees.group); resources.push(trees);
+  for (const [Generator, placements] of [[StreetlightGenerator, furniture.lights], [BenchGenerator, furniture.benches], [CarGenerator, furniture.cars]]) {
     const generator = new Generator(); group.add(generator.build(placements)); resources.push(generator);
   }
-  return { group, plan, dispose() {
+  return { group, plan, colliders: plan.buildings.map(b => b.collider), dispose() {
     group.removeFromParent();
     group.traverse(object => { if (object.isInstancedMesh) object.dispose(); });
     resources.forEach(resource => { const material = resource.material; resource.dispose(); if (material) material.dispose(); });

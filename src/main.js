@@ -4,6 +4,8 @@ import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
+import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
+import { makeCityReflection } from './reflections.js';
 import { buildCity } from './city.js';
 import { moveWithCollisions } from './plan.js';
 import './style.css';
@@ -41,7 +43,7 @@ root.innerHTML = `
 `;
 
 const $ = id => document.getElementById(id);
-let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode;
+let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode, csm, reflectionTarget;
 let environmentTexture;
 let mode = 'walk';
 let previousTime = 0, elapsed = 0, frames = 0;
@@ -53,9 +55,9 @@ const QUALITY = {
   high: { scale: 1.5, cap: 2, shadows: 4096, aoScale: .75 },
 };
 const MOODS = {
-  golden: { sun: [110, 95, 55], sunColor: 0xffe1b5, intensity: 3.1, sky: 0xb8c6c9, ground: 0x715e51, hemi: 1.5, exposure: 1.05, fog: 0xc0b4a4, density: .0028, turbidity: 7, rayleigh: 1.35, warm: .06, zenith: '#7297b4', horizon: '#f5d3aa' },
-  blue: { sun: [-110, 30, 70], sunColor: 0x9bb9e7, intensity: 1.2, sky: 0x6d8aad, ground: 0x4a4a61, hemi: 1.05, exposure: .95, fog: 0x899cac, density: .0038, turbidity: 8, rayleigh: .7, warm: 1.2, zenith: '#384f79', horizon: '#c0a5aa' },
-  overcast: { sun: [50, 150, 50], sunColor: 0xdbe5f2, intensity: 1.2, sky: 0xcbd8e6, ground: 0x767b7c, hemi: 1.8, exposure: 1.1, fog: 0xc3cdd1, density: .0035, turbidity: 10, rayleigh: .85, warm: .08, zenith: '#869bab', horizon: '#dce0dd' },
+  golden: { sun: [110, 95, 55], sunColor: 0xffe1b5, intensity: 2.7, sky: 0xb8c6c9, ground: 0x715e51, hemi: 1.2, exposure: 1.0, fog: 0xb7b4ac, density: .0017, turbidity: 7, rayleigh: 1.35, warm: .06, zenith: '#7297b4', horizon: '#f5d3aa' },
+  blue: { sun: [-110, 30, 70], sunColor: 0x9bb9e7, intensity: 1.1, sky: 0x6d8aad, ground: 0x4a4a61, hemi: .8, exposure: .95, fog: 0x899cac, density: .0025, turbidity: 8, rayleigh: .7, warm: 1.2, zenith: '#384f79', horizon: '#c0a5aa' },
+  overcast: { sun: [50, 150, 50], sunColor: 0xdbe5f2, intensity: 1.15, sky: 0xcbd8e6, ground: 0x767b7c, hemi: 1.3, exposure: 1.0, fog: 0xc3cdd1, density: .0025, turbidity: 10, rayleigh: .85, warm: .08, zenith: '#869bab', horizon: '#dce0dd' },
 };
 
 function environment(mood) {
@@ -81,7 +83,11 @@ function applyMood() {
   scene.fog.color.set(p.fog); scene.fog.density = p.density;
   renderer.toneMappingExposure = p.exposure;
   city.materials.glassWarm.emissiveIntensity = p.warm;
-  environmentTexture?.dispose(); environmentTexture = environment(p); scene.environment = environmentTexture;
+  const oldSky = environmentTexture, oldReflection = reflectionTarget;
+  environmentTexture = environment(p);
+  reflectionTarget = makeCityReflection(renderer, city.plan, environmentTexture, direction, p.sunColor);
+  scene.environment = reflectionTarget.texture;
+  oldReflection?.dispose(); oldSky?.dispose();
 }
 
 function applyQuality() {
@@ -93,6 +99,9 @@ function applyQuality() {
     shadowSize = quality.shadows;
     sun.shadow.map?.dispose(); sun.shadow.map = null;
     sun.shadow.mapSize.set(shadowSize, shadowSize); sun.shadow.needsUpdate = true;
+    if (csm) for (const light of csm.lights) {
+      light.shadow.mapSize.set(shadowSize, shadowSize); light.shadow.needsUpdate = true;
+    }
   }
   if (aoNode) aoNode.resolutionScale = quality.aoScale;
 }
@@ -167,7 +176,9 @@ async function init() {
     sun.shadow.camera.left = -180; sun.shadow.camera.right = 180;
     sun.shadow.camera.top = 180; sun.shadow.camera.bottom = -180;
     sun.shadow.camera.near = .5; sun.shadow.camera.far = 500;
-    sun.shadow.bias = -.00015; sun.shadow.normalBias = .045;
+    sun.shadow.bias = -.0001; sun.shadow.normalBias = .025;
+    csm = new CSMShadowNode(sun, { cascades: 3, maxFar: 260, lightMargin: 120 });
+    csm.fade = true; sun.shadow.shadowNode = csm;
     scene.add(sun); scene.add(sun.target);
     const prePass = pass(scene, camera); prePass.setMRT(mrt({ output: normalView }));
     aoNode = ao(prePass.getTextureNode('depth'), prePass.getTextureNode(), camera);
@@ -196,7 +207,7 @@ function frame(now) {
     const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 8 : 4.4) * dt;
     const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * s) * speed;
     const dz = (-Math.cos(yaw) * f - Math.sin(yaw) * s) * speed;
-    const p = moveWithCollisions(camera.position, dx, dz, city.plan.buildings.map(b => b.collider), .38, city.plan.bounds);
+    const p = moveWithCollisions(camera.position, dx, dz, city.colliders, .38, city.plan.bounds);
     camera.position.x = p.x; camera.position.z = p.z;
   }
   pipeline.render();
@@ -209,7 +220,7 @@ $('seed').addEventListener('keydown', event => { if (event.key === 'Enter') rebu
 $('mood').addEventListener('change', applyMood); $('quality').addEventListener('change', applyQuality);
 $('overview').addEventListener('click', setOverview); $('walk').addEventListener('click', enterWalk);
 $('retry').addEventListener('click', () => location.reload());
-window.addEventListener('resize', () => { if (!renderer || !camera) return; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+window.addEventListener('resize', () => { if (!renderer || !camera) return; camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); if (csm?.camera) csm.updateFrustums(); renderer.setSize(innerWidth, innerHeight); });
 window.addEventListener('keydown', e => { if (document.pointerLockElement) { keys.add(e.code); if (e.code === 'KeyR') resetWalk(); e.preventDefault(); } });
 window.addEventListener('keyup', e => keys.delete(e.code)); window.addEventListener('blur', () => keys.clear());
 document.addEventListener('mousemove', e => { if (document.pointerLockElement !== renderer?.domElement || mode !== 'walk') return; yaw -= e.movementX * .002; pitch = Math.max(-1.4, Math.min(1.4, pitch - e.movementY * .002)); updateCameraRotation(); });

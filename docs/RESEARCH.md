@@ -81,7 +81,7 @@ Examples of constraints:
 - Control neighboring heights and styles at district scale; preserve occasional deliberate contrast.
 - Carry a footprint through collision, shadow proxies and distant representation; never replace a complex silhouette with an unrelated box at long range.
 
-**In the current experiment:** independently seeded historic, modern, residential, stepped, round and lobed families. Windows, projecting sills, facade bands, balconies, awnings, rooftop machinery and curved fins are geometry. Historic buildings use the Three.js r186 `SkyscraperGenerator` for detailed masonry, piers, window frames and ground-floor storefronts. Some non-heritage glazing is a thin panel placed over a solid backing rather than a fully cut opening, and some roof treatments are deliberately simple. The six families are prototypes rather than an exhaustive grammar.
+**In the current experiment:** independently seeded historic, modern, residential, stepped, round and lobed families. Windows, projecting sills, facade bands, balconies, awnings, rooftop machinery and curved fins are geometry. Historic buildings use the Three.js r186 `SkyscraperGenerator` for detailed masonry, piers, window frames and ground-floor storefronts. Non-heritage walls are assembled from piers and spandrels around inset glazing, with shader-generated room interiors behind the pane; some roof treatments remain deliberately simple. The six families are prototypes rather than an exhaustive grammar.
 
 ## 5. Materials and anti-repetition
 
@@ -103,23 +103,23 @@ Combine procedural evaluation with authored/scanned materials where it makes sen
 
 Real glass is dielectric and its appearance varies with viewing angle, thickness, dirt, interior illumination and surroundings. For a city, combine a restrained environment reflection, facade depth, differentiated interior occupancy, and physically credible frames; avoid relying on black or overly metallic windows. Screen-space reflections miss off-screen geometry and need fallback to probes/environment maps. Parallax interior mapping can provide depth but must be temporally stable and avoid repeated identical rooms.
 
-The prototype uses reflective, opaque metallic-roughness approximations for its generic panes. The heritage material includes a procedural interior approximation from the Three.js generator. Neither is physically accurate refractive multi-layer glazing.
+The prototype uses shader-generated interiors for generic rectangular panes and heritage buildings, plus reflective opaque panels on curved towers. A single shared city-proxy cubemap supplies approximate reflections. None of these is physically accurate refractive multi-layer glazing or a local reflection probe.
 
 ## 6. Lighting, shadows and cinematic image quality
 
 ### 6.1 Available now
 
-- Direct sun with a shadow map, restrained bias/normal bias and a bounded shadow frustum.
-- Atmospheric sky and fog plus an environment approximation for specular response.
+- Direct sun with three camera-relative cascaded shadow maps, restrained bias/normal bias and texel-aligned cascade placement.
+- Atmospheric sky and fog plus a shared city-proxy environment capture for specular response.
 - PBR materials, sky/ground fill and screen-space ambient occlusion.
 - Tone mapping, modest bloom and FXAA; user-selectable light moods and render budgets.
 
-The prototype's shadow map is a **single fixed directional shadow map**: 1024, 2048 or 4096 depending on quality. It does not implement cascades. The environment is a generated gradient, not a scene capture or HDR sky probe. Ambient fill is not indirect global illumination. FXAA does not address all temporal shimmer. AO is screen-space and cannot see hidden geometry. Emissive windows do not cast light. These are deliberate limitations to investigate, not evidence of AAA quality.
+The prototype uses Three.js CSMShadowNode with three cascades at 1024, 2048 or 4096 per map depending on quality. Its environment probe captures simplified city silhouettes from one fixed location and is rebuilt when the seed or atmosphere changes; it is not a spatially local reflection, SSR or HDR sky probe. Ambient fill is not indirect global illumination. FXAA does not address all temporal shimmer. AO is screen-space and cannot see hidden geometry. Emissive windows do not cast light. These are deliberate limitations to investigate, not evidence of AAA quality.
 
 ### 6.2 Recommended production order
 
 1. Capture a controlled visual reference and work in linear HDR. Calibrate exposure, reference white, material values and tone mapping; include overcast, direct sun and night.
-2. Replace the single large shadow frustum with camera-relative cascaded shadows. Stabilise projected shadow texels, blend cascade edges, tune slope/normal bias per scene scale, and reserve fine contact shadows for nearby detail. Measure acne, detached shadows and movement shimmer [15].
+2. Validate the implemented camera-relative cascaded shadows on target GPUs. Tune cascade splits, texel stability, edge blending and slope/normal bias, and reserve fine contact shadows for nearby detail. Measure acne, detached shadows and movement shimmer [15].
 3. Add temporally stable AO at half resolution, depth-aware upsampling and explicit history rejection. Keep AO in the indirect-light component, avoiding multiplication over direct sun.
 4. Evaluate screen-space reflections and probe fallback. Preserve roughness response, test screen-edge disocclusions and compare against a path-traced reference. Reflective glass must not depend exclusively on screen space.
 5. Add a GI approach suited to Aether's dynamic requirements: baked/probe lighting for static layout, dynamically updated probes or a sparse volumetric representation for larger changes. Screen-space GI is an optional contribution, not a complete world-space solution.
@@ -155,7 +155,7 @@ For a commercial project, review every dependency, code example, texture, font, 
 
 ## 9. Validation plan and acceptance gates
 
-The tests included now cover deterministic layouts, 100 seeds without overlapping building bounds or blocked spawn, and collision sliding/tunnelling. They do not prove appearance, frame rate, lighting, shader correctness on all adapters or navigation in a complex city.
+The tests included now cover deterministic layouts, 100 seeds without overlapping building bounds or blocked spawn, collision sliding/tunnelling and outward-facing pane geometry. They do not prove appearance, frame rate, lighting, shader correctness on all adapters or navigation in a complex city.
 
 A production validation set should include:
 
@@ -174,7 +174,7 @@ A production validation set should include:
 
 **M2 — One reference-quality block:** replace the fixed generic block with authored modular building kits, correct ground-floor entrances, realistic glass, layered materials, pavement details and one distinctive landmark. Verify all angles before multiplying the content.
 
-**M3 — Stable illumination:** introduce cascaded shadows, TAA, calibrated sky and environment probes, plus a GI experiment and objective visual comparisons. Establish separate quality modes with measured costs.
+**M3 — Stable illumination:** validate and tune cascaded shadows, then introduce TAA, calibrated sky and spatially local environment probes, plus a GI experiment and objective visual comparisons. Establish separate quality modes with measured costs.
 
 **M4 — District generation:** road graph, irregular blocks and parcels, district style and density controls, persistent artist overrides, semantic navigation and gameplay data.
 
@@ -202,3 +202,5 @@ A production validation set should include:
 16. wgpu, [Experimental ray-tracing extensions](https://github.com/gfx-rs/wgpu/blob/trunk/docs/api-specs/ray_tracing.md).
 17. AMD, [From vertex shader to mesh shader](https://gpuopen.com/learn/mesh_shaders/mesh_shaders-from_vertex_shader_to_mesh_shader/). This is native API background, not a claim that WebGPU exposes mesh shaders.
 18. Three.js, [MIT licence](https://github.com/mrdoob/three.js/blob/dev/LICENSE).
+19. van Dongen (2008), [Interior Mapping](https://www.proun-game.com/Oogst3D/CODING/InteriorMapping/InteriorMapping.pdf).
+20. Three.js, [CSMShadowNode](https://threejs.org/docs/pages/CSMShadowNode.html).

@@ -22,15 +22,15 @@ The controls are designed for a desktop keyboard and mouse. Touch navigation is 
 
 ## What is actually implemented
 
-- A deterministic 4 × 4 block layout with 64 building lots, pavements, street markings, trees, streetlights, benches and parked cars.
-- Six seeded families: heritage, modern, residential, stepped, round and lobed. Generic buildings are built from geometry including windows, bands, balconies, roof equipment and curved fins. The heritage family uses the Three.js procedural skyscraper generator.
+- A deterministic 4 × 4 block layout with 64 building lots, pavements, street markings, geometric street trees, streetlights, benches and parked cars.
+- Six seeded families: heritage, modern, residential, stepped, round and lobed. Generic buildings are assembled from piers, spandrels, recessed window frames, balconies, roof equipment and curved fins. Glazing uses shader-generated room interiors; the heritage family uses the Three.js procedural skyscraper generator.
 - Instancing for repeated components, conservative building collision and wall sliding.
-- GPU-evaluated mineral-surface variation and bump, metallic-roughness materials, an analytic sky, a single filtered directional shadow map, environment approximation, screen-space ambient occlusion, tone mapping, subtle bloom and FXAA.
+- GPU-evaluated mineral-surface variation and bump, metallic-roughness materials, an analytic sky, three cascaded directional shadow maps, a shared proxy-city reflection probe, screen-space ambient occlusion, tone mapping, subtle bloom and FXAA.
 - Golden-hour, blue-hour and overcast presets. Quality settings control pixel ratio, shadow-map size and AO resolution.
 
 ## Important limitations
 
-This is a compact research scene with a fixed road grid. It does not yet provide irregular parcels, a full building grammar, authentic production assets, global illumination, ray-traced reflections, cascaded shadow maps, temporal antialiasing, streaming, LODs or navigation on mobile. The generic glass uses an opaque reflective approximation; it is not physically accurate refractive glazing. The AO, environment lighting and shadows are approximations, not ray tracing. Frame rate and visual quality need evaluation on target hardware.
+This is a compact research scene with a fixed road grid. It does not yet provide irregular parcels, a full building grammar, authentic production assets, global illumination, ray-traced reflections, temporal antialiasing, streaming, LODs or navigation on mobile. Glass combines opaque interior mapping or reflective panels with a shared, static proxy-city cubemap. It is not physically accurate refractive glazing, and reflections are not spatially local. The AO, environment lighting and shadows are approximations, not ray tracing. Frame rate and visual quality need evaluation on target hardware.
 
 Standard browser WebGPU does not currently offer a generally available hardware ray-tracing API. Software ray tracing in compute is a possible future experiment, with material performance and denoising trade-offs. See the research document for sources and a plan.
 
@@ -48,6 +48,7 @@ Tests cover seed reproducibility, non-overlapping layout and walking collision. 
 - `src/plan.js` — deterministic city layout and movement collision.
 - `src/city.js` — architectural assembly, instances and streetscape.
 - `src/materials.js` — GPU procedural material variation.
+- `src/glazing.js`, `src/foliage.js`, `src/reflections.js` — recessed glazing, geometric trees and the shared reflection probe.
 - `src/main.js` — WebGPU scene, controls, lighting, and post-processing.
 - `docs/RESEARCH.md` — research, constraints, validation and roadmap.
 - `tests/` — layout and collision invariants.
