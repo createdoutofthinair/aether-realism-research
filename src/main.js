@@ -6,11 +6,12 @@ import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
 import { CSMShadowNode } from 'three/addons/csm/CSMShadowNode.js';
 import { startCityReflection } from './reflections.js';
-import { buildCity } from './city.js';
+import { buildCity, buildCityShell } from './city.js';
 import { moveWithCollisions } from './plan.js';
 import { loadMaterialLibrary } from './materialLibrary.js';
 import { MATERIAL_CATALOG, materialMapPath } from './materialCatalog.js';
 import { probeAnchor, probeKey } from './probePolicy.js';
+import { GpuVisibility } from './gpuVisibility.js';
 import './style.css';
 
 const root = document.querySelector('#app');
@@ -34,6 +35,9 @@ root.innerHTML = `
     <select id="mood" aria-label="Lighting atmosphere"><option value="golden">Golden hour</option><option value="blue">Blue hour</option><option value="overcast">Soft overcast</option></select>
     <div class="field-head field-space"><label for="quality">RENDER QUALITY</label><span>GPU BUDGET</span></div>
     <select id="quality" aria-label="Render quality"><option value="balanced">Balanced</option><option value="high">High resolution</option><option value="low">Performance</option></select>
+    <div class="field-head field-space"><label for="geometry-mode">GEOMETRY</label><span>VISIBILITY / DETAIL</span></div>
+    <select id="geometry-mode" aria-label="Geometry detail mode"><option value="stable">Conservative quality</option><option value="adaptive">GPU adaptive</option><option value="hierarchy">Depth hierarchy experiment</option><option value="meshlet">Glazing meshlet experiment</option><option value="full">Full geometry</option><option value="detail">Adaptive detail only</option><option value="occlusion">Occlusion only</option><option value="distant">Inspect distant geometry</option></select>
+    <p class="hint" id="visibility-status">Preparing GPU visibility…</p>
     <div class="field-head field-space"><label for="weather">SURFACE WEATHERING</label><span id="weather-value">80%</span></div>
     <input id="weather" class="weather-range" type="range" min="0" max="150" value="80" aria-label="Surface weathering">
     <button id="open-materials" class="library-button"><span>EXPLORE MATERIAL SETS</span><span>↗</span></button>
@@ -53,7 +57,8 @@ root.innerHTML = `
   <dialog class="material-dialog performance-dialog" id="performance-dialog" aria-labelledby="performance-title">
     <div class="material-heading"><div><div class="eyebrow">CITY LAB / DIAGNOSTICS</div><h2 id="performance-title">Performance details</h2><p>Measurements from this browser and device.</p></div><button id="close-performance" class="close-dialog" aria-label="Close performance details">×</button></div>
     <div class="performance-grid" id="performance-grid"></div>
-    <p class="material-footer">Frame time includes browser scheduling. CPU submit time does not measure GPU execution; shader compilation and texture upload may continue after the first frame.</p>
+    <p class="material-footer">Frame time includes browser scheduling. Optional GPU timing adds measurement overhead; render and visibility timings are separate.</p>
+    <button id="toggle-gpu-timing" class="library-button"><span>ENABLE GPU TIMING</span><span>↗</span></button>
     <button id="copy-performance" class="library-button"><span>COPY DIAGNOSTICS</span><span>↗</span></button>
   </dialog>
   <div class="loader" id="loader"><div class="loader-inner"><div class="spinner"></div><strong id="loader-title">BUILDING THE CITY</strong><span id="loader-detail">Preparing WebGPU and architectural modules…</span></div></div>
@@ -62,13 +67,14 @@ root.innerHTML = `
 
 const $ = id => document.getElementById(id);
 let renderer, scene, camera, sky, sun, hemi, pipeline, city, shadowSize = 0, aoNode, csm;
-let environmentTexture, materialLibrary;
+let environmentTexture, materialLibrary, gpuVisibility, visibilitySamplePending = false, rebuildGeneration = 0, gpuTimingEnabled = false, gpuTimingPending = false;
+let cityBuild = null;
 const reflectionCache = new Map();
 let currentProbeKey = null, nextProbeCheck = 0, pendingProbe = null;
 let mode = 'walk';
 let previousTime = 0, elapsed = 0, frames = 0;
 const performanceInfo = { started: performance.now(), deviceMs: null, materialsMs: null, cityMs: null,
-  firstFrameMs: null, probeMs: null, frameMs: null, frame95Ms: null, submitMs: null, draws: null, triangles: null };
+  firstFrameMs: null, cityTotalMs: null, pageHits: 0, pageMisses: 0, probeMs: null, frameMs: null, frame95Ms: null, submitMs: null, draws: null, triangles: null, visibility: null, gpuRenderMs: null };
 const frameSamples = [];
 let yaw = 0, pitch = 0;
 const keys = new Set();
@@ -190,21 +196,82 @@ function enterWalk() {
   renderer.domElement.requestPointerLock();
 }
 function setLoading(title, detail) { $('loader-title').textContent = title; $('loader-detail').textContent = detail; $('loader').hidden = false; }
+function stopCityBuild() {
+  if (!cityBuild) return;
+  cityBuild.worker.terminate(); cityBuild.release(); cityBuild=null;
+}
+function prepareVisibility(next, generation) {
+  $('visibility-status').textContent = 'Preparing GPU visibility…';
+  GpuVisibility.create(renderer, next, camera).then(controller => {
+    if (city !== next || generation !== rebuildGeneration) { controller?.dispose(); return; }
+    gpuVisibility = controller;
+    if (controller) {
+      controller.mode = $('geometry-mode').value;
+      $('visibility-status').textContent = `${controller.entries.length} GPU visibility groups · ${controller.occluderCount} opaque occluders`;
+    } else $('visibility-status').textContent = 'Full geometry · GPU visibility unavailable';
+  }).catch(error => {
+    if (city === next && generation === rebuildGeneration) $('visibility-status').textContent = 'Full geometry · GPU visibility unavailable';
+    console.warn('GPU visibility unavailable; using full geometry:', error);
+  });
+}
 async function rebuild() {
+  const generation = ++rebuildGeneration;
+  stopCityBuild();
   const raw = Number($('seed').value);
   const seed = Number.isFinite(raw) ? Math.max(0, Math.min(4294967295, Math.floor(raw))) : 1827;
   $('seed').value = seed;
   setLoading('BUILDING THE CITY', 'Assembling streets, façades and architectural forms…');
   if (document.pointerLockElement) document.exitPointerLock();
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  if (generation !== rebuildGeneration) return;
   try {
     const buildStarted = performance.now();
-    const next = buildCity(seed, materialLibrary);
-    performanceInfo.cityMs = performance.now() - buildStarted;
+    const next = buildCityShell(seed, materialLibrary);
+    performanceInfo.cityMs = null; performanceInfo.cityTotalMs = null; performanceInfo.pageHits=0; performanceInfo.pageMisses=0;
+    gpuVisibility?.dispose(); gpuVisibility = null; performanceInfo.visibility = null;
     city?.dispose(); city = next; scene.add(city.group);
     $('building-count').textContent = String(city.plan.buildings.length).padStart(2, '0');
     resetWalk(); applyMood();
-    $('loader').hidden = true;
+    let release;
+    const ready=new Promise(resolve => { let settled=false; release=()=>{if(!settled){settled=true;resolve();}}; });
+    const finishNear=()=>{
+      if(generation!==rebuildGeneration || city!==next) { release(); return; }
+      if(performanceInfo.cityMs===null) performanceInfo.cityMs=performance.now()-buildStarted;
+      $('loader').hidden=true; release();
+    };
+    const fallback=error=>{
+      if(generation!==rebuildGeneration || city!==next) { release(); return; }
+      console.warn('City worker unavailable; generating on the main thread:', error);
+      cityBuild?.worker.terminate(); cityBuild=null;
+      try {
+        const replacement=buildCity(seed,materialLibrary);
+        next.dispose(); city=replacement; scene.add(replacement.group);
+        performanceInfo.cityMs=performance.now()-buildStarted; performanceInfo.cityTotalMs=performanceInfo.cityMs;
+        $('loader').hidden=true; release(); prepareVisibility(replacement,generation);
+      } catch(cause) { release(); showFailure('City generation failed',cause); }
+    };
+    try {
+      const worker=new Worker(new URL('./cityWorker.js',import.meta.url),{type:'module'});
+      cityBuild={worker,release};
+      worker.onmessage=event=>{
+        if(generation!==rebuildGeneration || city!==next) return;
+        const message=event.data;
+        if(message.type==='error') { fallback(new Error(message.message)); return; }
+        if(message.type==='chunk') {
+          try { next.append(message.meshes); } catch(error) { fallback(error); return; }
+          if(message.cached) performanceInfo.pageHits++; else performanceInfo.pageMisses++;
+          $('loader-detail').textContent=`Preparing nearby architecture ${message.completed} / ${message.total}…`;
+          $('visibility-status').textContent=`Building district ${message.completed} / ${message.total}…`;
+          if(message.completed>=Math.min(4,message.total)) finishNear();
+        } else if(message.type==='done') {
+          performanceInfo.cityTotalMs=performance.now()-buildStarted;
+          worker.terminate(); cityBuild=null; finishNear(); prepareVisibility(next,generation);
+        }
+      };
+      worker.onerror=event=>{event.preventDefault();fallback(new Error(event.message || 'Worker failed'));};
+      worker.postMessage({plan:next.plan,origin:{x:camera.position.x,z:camera.position.z}});
+    } catch(error) { fallback(error); }
+    await ready;
   } catch (error) { showFailure('City generation failed', error); }
 }
 
@@ -297,6 +364,14 @@ function frame(now) {
   }
   renderer.info.reset();
   const submitStarted = performance.now();
+  if (gpuVisibility) {
+    try { gpuVisibility.update(); }
+    catch (error) {
+      console.warn('GPU visibility failed; restoring full geometry:', error);
+      gpuVisibility.dispose(); gpuVisibility = null;
+      $('visibility-status').textContent = 'Full geometry · GPU visibility unavailable';
+    }
+  }
   pipeline.render();
   performanceInfo.submitMs = performance.now() - submitStarted;
   performanceInfo.draws = renderer.info.render.drawCalls;
@@ -317,7 +392,7 @@ function frame(now) {
       performanceInfo.frameMs = frameSamples.reduce((sum, value) => sum + value, 0) / frameSamples.length;
       performanceInfo.frame95Ms = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * .95) - 1)];
     }
-    if ($('performance-dialog').open) refreshPerformance();
+    if ($('performance-dialog').open) { sampleVisibility(); sampleGpuTiming(); refreshPerformance(); }
     frames = 0; elapsed = 0;
   }
 }
@@ -328,24 +403,46 @@ function performanceRows() {
   return [
     ['WebGPU device setup', ms(performanceInfo.deviceMs)],
     ['Material image loading', ms(performanceInfo.materialsMs)],
-    ['City assembly on CPU', ms(performanceInfo.cityMs)],
+    ['Nearby district ready', ms(performanceInfo.cityMs)],
+    ['All district blocks ready', ms(performanceInfo.cityTotalMs)],
+    ['Cached district blocks', `${integer(performanceInfo.pageHits)} / ${integer(performanceInfo.pageHits+performanceInfo.pageMisses)}`],
     ['First frame from app start', ms(performanceInfo.firstFrameMs)],
     ['Average frame interval', ms(performanceInfo.frameMs)],
     ['95th percentile frame interval', ms(performanceInfo.frame95Ms)],
     ['CPU render submission', ms(performanceInfo.submitMs)],
     ['Last probe face on CPU', ms(performanceInfo.probeMs)],
     ['Draw calls across passes', integer(performanceInfo.draws)],
-    ['Triangles across passes', integer(performanceInfo.triangles)],
-    ['GPU execution time', 'Not measured'],
+    ['Submitted triangles (upper bound)', integer(performanceInfo.triangles)],
+    ['GPU-hidden near groups', performanceInfo.visibility ? `${integer(performanceInfo.visibility.hidden)} / ${integer(performanceInfo.visibility.clusters)}` : '—'],
+    ['Hidden fine-detail groups', integer(performanceInfo.visibility?.detail)],
+    ['GPU-visible distant groups', integer(performanceInfo.visibility?.distant)],
+    ['Glazing groups evicted', performanceInfo.visibility ? `${integer(performanceInfo.visibility.streamedOut)} / ${integer(performanceInfo.visibility.streamable)}` : '—'],
+    ['Meshlet indices submitted', performanceInfo.visibility?.meshletTotal ? `${integer(performanceInfo.visibility.meshletIndices)} / ${integer(performanceInfo.visibility.meshletTotal)}` : '—'],
+    ['GPU render passes', gpuTimingEnabled ? ms(performanceInfo.gpuRenderMs) : 'Timing disabled'],
+    ['GPU visibility compute', gpuTimingEnabled ? ms(gpuVisibility?.timingMs) : 'Timing disabled'],
   ];
 }
 function refreshPerformance() {
   $('performance-grid').innerHTML = performanceRows().map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join('');
 }
+function sampleVisibility() {
+  if (!gpuVisibility || visibilitySamplePending) return;
+  const current = gpuVisibility; visibilitySamplePending = true;
+  current.sample().then(sample => { if (current === gpuVisibility) { performanceInfo.visibility = sample; refreshPerformance(); } })
+    .catch(() => {}).finally(() => { visibilitySamplePending = false; });
+}
+function sampleGpuTiming() {
+  if (!gpuTimingEnabled || gpuTimingPending || !renderer?.backend?.trackTimestamp) return;
+  gpuVisibility?.requestTiming(); gpuTimingPending = true;
+  renderer.resolveTimestampsAsync('render').then(value => {
+    if (Number.isFinite(value)) performanceInfo.gpuRenderMs = value;
+  }).catch(() => {}).finally(() => { gpuTimingPending = false; });
+}
 
 $('generate').addEventListener('click', rebuild);
 $('seed').addEventListener('keydown', event => { if (event.key === 'Enter') rebuild(); });
 $('mood').addEventListener('change', applyMood); $('quality').addEventListener('change', applyQuality);
+$('geometry-mode').addEventListener('change', event => { if (gpuVisibility) gpuVisibility.mode = event.target.value; });
 $('overview').addEventListener('click', setOverview); $('walk').addEventListener('click', enterWalk);
 $('weather').addEventListener('input', event => {
   const amount = Number(event.target.value); $('weather-value').textContent = `${amount}%`;
@@ -354,8 +451,15 @@ $('weather').addEventListener('input', event => {
 $('material-grid').innerHTML = MATERIAL_CATALOG.map(item => `<a class="material-card" href="https://polyhaven.com/a/${item.id}" target="_blank" rel="noopener noreferrer"><img src="${materialMapPath(import.meta.env.BASE_URL, item.id, 'color')}" alt="" loading="lazy"><div><strong>${item.name}</strong><small>1K PBR · ${item.metres.toFixed(1)} m tile</small><span>${item.pattern === 'stochastic' ? 'ANTI-REPETITION' : 'ALIGNED STRUCTURE'} ↗</span></div></a>`).join('');
 $('open-materials').addEventListener('click', () => $('material-dialog').showModal());
 $('close-materials').addEventListener('click', () => $('material-dialog').close());
-$('open-performance').addEventListener('click', () => { refreshPerformance(); $('performance-dialog').showModal(); });
+$('open-performance').addEventListener('click', () => { refreshPerformance(); $('performance-dialog').showModal(); sampleVisibility(); });
 $('close-performance').addEventListener('click', () => $('performance-dialog').close());
+$('toggle-gpu-timing').addEventListener('click', () => {
+  const label=$('toggle-gpu-timing').firstElementChild;
+  if (!renderer?.backend?.device?.features.has('timestamp-query')) { label.textContent='GPU TIMING UNAVAILABLE'; return; }
+  gpuTimingEnabled=!gpuTimingEnabled;renderer.backend.trackTimestamp=gpuTimingEnabled;
+  label.textContent=gpuTimingEnabled ? 'DISABLE GPU TIMING' : 'ENABLE GPU TIMING';
+  performanceInfo.gpuRenderMs=null;refreshPerformance();
+});
 $('copy-performance').addEventListener('click', async () => {
   const button = $('copy-performance');
   try {
